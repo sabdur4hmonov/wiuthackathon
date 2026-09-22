@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<!--
+  Ground-truth labelling tool. Open this file directly in a browser.
+
+  Zero setup: no server, no install, runs from file://. Load a clip, scrub, mark
+  [start, end, class] segments, export ground_truth.json in the exact shape
+  evaluate.py expects.
+
+  Designed for SPEED, because hand-labelling the sample clips is the highest-
+  value hour in the competition and the only thing that turns guesses into
+  measurements:
+
+    * one key per class — tap to open a segment, tap again to close it
+    * arrow keys scrub by a single frame; the timestamp is shown to 3 dp
+    * tIoU 0.7 punishes sloppy boundaries, so the current frame number and
+      exact second are always on screen
+    * multiple clips accumulate into one JSON keyed by file name
+    * an existing ground_truth.json can be loaded back in and extended
+
+  Export shape (evaluate.py --gt):
+    {"clip.mp4": {"duration": 600.0, "fps": 25.0,
+                  "events": [[12.0, 19.0, "accident"]]}}
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Label Clips</title>
+<style>
+  :root{
+    --bg:#0f1117; --panel:#171a23; --line:#282d3a; --fg:#e7eaf3; --mut:#98a1b8;
+    --accent:#5b9cff; --ok:#3ecf8e; --warn:#ffb648; --bad:#ff6b6b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);height:100vh;display:flex;
+       font:13px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;overflow:hidden}
+  #left{flex:1;display:flex;flex-direction:column;min-width:0}
+  #right{width:340px;flex:0 0 340px;background:var(--panel);
+         border-left:1px solid var(--line);display:flex;flex-direction:column}
+  #stage{flex:1;position:relative;background:#000;display:flex;
+         align-items:center;justify-content:center;min-height:0}
+  video{max-width:100%;max-height:100%;display:block}
+  #bar{background:var(--panel);border-top:1px solid var(--line);padding:8px 12px}
+  #tl{position:relative;height:52px;background:#0b0d13;border:1px solid var(--line);
+      border-radius:5px;margin-top:8px;cursor:pointer;overflow:hidden}
+  #play{position:absolute;top:0;bottom:0;width:2px;background:var(--bad);
+        pointer-events:none;z-index:5}
+  .seg{position:absolute;height:12px;border-radius:3px;opacity:.85}
+  .seg.open{outline:1px dashed #fff}
+  h2{font-size:11px;color:var(--mut);margin:12px 12px 6px;
+     text-transform:uppercase;letter-spacing:.09em}
+  button{background:#232839;color:var(--fg);border:1px solid var(--line);
+         border-radius:5px;padding:5px 9px;cursor:pointer;font:inherit;font-size:12px}
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent);border-color:var(--accent);
+                 color:#07101f;font-weight:700}
+  button.danger{border-color:var(--bad);color:var(--bad)}
+  .row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:0 12px;margin:6px 0}
+  input[type=text],input[type=number],select{background:#0b0d13;color:var(--fg);
+         border:1px solid var(--line);border-radius:5px;padding:4px 6px;font:inherit}
+  #clock{font-size:26px;font-variant-numeric:tabular-nums;letter-spacing:.02em}
+  #clock small{font-size:12px;color:var(--mut)}
+  #classes{overflow-y:auto;padding:0 12px;flex:0 0 auto;max-height:42vh}
+  .cls{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:5px;
+       margin:2px 0;cursor:pointer;border:1px solid transparent}
+  .cls:hover{border-color:var(--line)}
+  .cls.armed{background:#20283c;border-color:var(--accent)}
+  .key{display:inline-flex;align-items:center;justify-content:center;
+       width:20px;height:20px;border:1px solid var(--line);border-radius:4px;
+       font-weight:700;font-size:11px;background:#0b0d13;flex:0 0 20px}
+  .swatch{width:10px;height:10px;border-radius:2px;flex:0 0 10px}
+  .nm{flex:1;font-size:12px}
+  .ct{color:var(--mut);font-size:11px}
+  #segs{flex:1;overflow-y:auto;padding:0 12px 12px;min-height:0}
+  .item{border:1px solid var(--line);border-radius:5px;padding:5px 7px;margin:4px 0;
+        background:#0b0d13;display:flex;gap:6px;align-items:center;font-size:11.5px}
+  .item:hover{border-color:var(--accent)}
+  .item .t{flex:1;cursor:pointer;font-variant-numeric:tabular-nums}
+  .hint{color:var(--mut);font-size:11px;padding:0 12px;white-space:pre-wrap}
+  #warn{color:var(--warn);font-size:11px;padding:4px 12px}
+  #drop{position:absolute;inset:0;display:flex;align-items:center;
+        justify-content:center;color:var(--mut);text-align:center;padding:24px}
+</style>
+</head>
+<body>
+
+<div id="left">
+  <div id="stage">
+    <video id="v" preload="metadata"></video>
+    <div id="drop">Choose a clip to begin<br><small>samples/*.mp4</small></div>
+  </div>
+  <div id="bar">
+    <div class="row" style="padding:0">
+      <input type="file" id="file" accept="video/mp4,video/*" style="font-size:11px">
+      <span id="clock">0.000<small> s</small></span>
+      <span class="ct" id="frameno">frame 0</span>
+      <span class="ct" id="dur"></span>
+      <span style="flex:1"></span>
+      <label class="ct">fps <input type="number" id="fps" value="25" min="1"
+             max="240" step="0.001" style="width:72px"></label>
+      <button id="pp">Play (Space)</button>
+    </div>
+    <div id="tl"><div id="play"></div></div>
+    <div class="hint" style="padding:6px 0 0">←/→ frame · Shift+←/→ 1 s · ,/. frame · Home/End · 1-9 speed · tIoU 0.7 means boundaries matter</div>
+  </div>
+</div>
+
+<div id="right">
+  <h2>Classes — tap to open, tap again to close</h2>
+  <div id="classes"></div>
+  <div id="warn"></div>
+  <h2>Segments <span class="ct" id="segcount"></span></h2>
+  <div id="segs"></div>
+  <div class="row"><button id="undo">Undo last (Ctrl+Z)</button>
+    <button id="cancel" class="danger">Cancel open (Esc)</button></div>
+  <h2>Export</h2>
+  <div class="row">
+    <button id="dl" class="primary">Download ground_truth.json</button>
+    <button id="copy">Copy</button>
+  </div>
+  <div class="row">
+    <label class="ct" style="font-size:11px">Load existing:
+      <input type="file" id="load" accept="application/json" style="font-size:10px"></label>
+  </div>
+  <div class="hint" style="padding-bottom:12px">Clips accumulate — label one, load the next, export once at the end.
+
+python evaluate.py --pred predictions_samples.json --gt ground_truth.json --per-video</div>
+</div>
+
+<script>
+"use strict";
+
+// The 14 official ids, in evaluate.py's order. Each gets a unique key.
+const CLASSES = [
+  ["a", "accident",            "#ff6b6b"],
+  ["n", "near_miss",           "#ff9f6b"],
+  ["r", "red_light",           "#ffb648"],
+  ["w", "wrong_way",           "#ffe66b"],
+  ["u", "illegal_u_turn",      "#c3e88d"],
+  ["s", "stopped_vehicle",     "#3ecf8e"],
+  ["j", "jaywalking",          "#5ad1c6"],
+  ["y", "failure_to_yield",    "#5b9cff"],
+  ["t", "illegal_turn",        "#8f8fff"],
+  ["l", "solid_line_crossing", "#c792ea"],
+  ["k", "stop_line",           "#e58fd0"],
+  ["c", "congestion",          "#d0a06a"],
+  ["o", "road_obstacle",       "#9aa3bb"],
+  ["f", "fire_smoke",          "#ff5ea8"],
+];
+const BY_KEY = Object.fromEntries(CLASSES.map(c => [c[0], c[1]]));
+const COLOUR = Object.fromEntries(CLASSES.map(c => [c[1], c[2]]));
+
+const v = document.getElementById("v");
+const state = {
+  name: null,          // current clip file name
+  duration: 0,
+  data: {},            // name -> {duration, fps, events:[[s,e,label]]}
+  open: {},            // label -> start seconds (segment being drawn)
+};
+
+const fpsEl = document.getElementById("fps");
+const fps = () => Math.max(1, parseFloat(fpsEl.value) || 25);
+
+// ---------------------------------------------------------------------------
+// clip loading
+// ---------------------------------------------------------------------------
+document.getElementById("file").addEventListener("change", e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  state.name = f.name;
+  v.src = URL.createObjectURL(f);
+  document.getElementById("drop").style.display = "none";
+  v.onerror = () => {
+    // MEDIA_ERR_SRC_NOT_SUPPORTED is the one that actually happens: a clip in a
+    // codec the browser cannot decode (e.g. MPEG-4 Part 2, which OpenCV writes
+    // by default). Say so, rather than leaving the tool looking merely idle.
+    const codes = {1: "loading aborted", 2: "network error",
+                   3: "decode error", 4: "codec not supported by this browser"};
+    const c = v.error ? v.error.code : 0;
+    const d = document.getElementById("drop");
+    d.style.display = "flex";
+    d.innerHTML = `<div><b style="color:var(--bad)">Cannot play ${state.name}</b><br>` +
+      `${codes[c] || "unknown error"} (code ${c})<br><br>` +
+      `<small>Browsers need H.264/AVC in MP4. Re-encode with:<br>` +
+      `<code>ffmpeg -i in.mp4 -c:v libx264 -crf 20 out.mp4</code></small></div>`;
+    warn(`${state.name}: ${codes[c] || "cannot play"}`);
+  };
+  v.onloadedmetadata = () => {
+    state.duration = v.duration;
+    if (!state.data[state.name]) {
+      state.data[state.name] = {duration: v.duration, fps: fps(), events: []};
+    } else {
+      state.data[state.name].duration = v.duration;
+    }
+    document.getElementById("dur").textContent =
+      `of ${v.duration.toFixed(3)} s`;
+    state.open = {};
+    render();
+  };
+});
+
+// ---------------------------------------------------------------------------
+// transport
+// ---------------------------------------------------------------------------
+function clamp(t){ return Math.max(0, Math.min(state.duration || 0, t)); }
+function seek(t){ v.currentTime = clamp(t); }
+function step(frames){ seek(v.currentTime + frames / fps()); }
+
+document.getElementById("pp").onclick = togglePlay;
+function togglePlay(){ v.paused ? v.play() : v.pause(); }
+
+v.addEventListener("timeupdate", tick);
+v.addEventListener("seeked", tick);
+v.addEventListener("play", () =>
+  document.getElementById("pp").textContent = "Pause (Space)");
+v.addEventListener("pause", () =>
+  document.getElementById("pp").textContent = "Play (Space)");
+
+function tick(){
+  const t = v.currentTime || 0;
+  document.getElementById("clock").innerHTML =
+    `${t.toFixed(3)}<small> s</small>`;
+  document.getElementById("frameno").textContent =
+    `frame ${Math.round(t * fps())}`;
+  const pct = state.duration ? (t / state.duration) * 100 : 0;
+  document.getElementById("play").style.left = pct + "%";
+}
+
+document.getElementById("tl").addEventListener("click", e => {
+  if (!state.duration) return;
+  const r = e.currentTarget.getBoundingClientRect();
+  seek(((e.clientX - r.left) / r.width) * state.duration);
+});
+
+// ---------------------------------------------------------------------------
+// segments
+// ---------------------------------------------------------------------------
+function entry(){
+  if (!state.name) return null;
+  return state.data[state.name];
+}
+
+function toggleClass(label){
+  const en = entry();
+  if (!en){ warn("Load a clip first."); return; }
+  const t = v.currentTime;
+  if (state.open[label] === undefined){
+    state.open[label] = t;
+  } else {
+    const s = state.open[label], e = t;
+    delete state.open[label];
+    if (Math.abs(e - s) < 1e-6){ warn(`${label}: zero-length segment ignored.`); render(); return; }
+    en.events.push([Math.min(s, e), Math.max(s, e), label]);
+    en.events.sort((p, q) => p[0] - q[0] || p[1] - q[1]);
+  }
+  render();
+}
+
+function removeSegment(i){
+  const en = entry(); if (!en) return;
+  en.events.splice(i, 1); render();
+}
+
+document.getElementById("undo").onclick = () => {
+  const en = entry(); if (!en || !en.events.length) return;
+  en.events.pop(); render();
+};
+document.getElementById("cancel").onclick = () => { state.open = {}; render(); };
+
+// ---------------------------------------------------------------------------
+// keyboard
+// ---------------------------------------------------------------------------
+window.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT") return;
+  const k = e.key;
+
+  if (k === " "){ e.preventDefault(); togglePlay(); return; }
+  if (k === "ArrowLeft"){ e.preventDefault(); v.pause(); step(e.shiftKey ? -fps() : -1); return; }
+  if (k === "ArrowRight"){ e.preventDefault(); v.pause(); step(e.shiftKey ? fps() : 1); return; }
+  if (k === ","){ e.preventDefault(); v.pause(); step(-1); return; }
+  if (k === "."){ e.preventDefault(); v.pause(); step(1); return; }
+  if (k === "Home"){ e.preventDefault(); seek(0); return; }
+  if (k === "End"){ e.preventDefault(); seek(state.duration); return; }
+  if (k === "Escape"){ state.open = {}; render(); return; }
+  if (k.toLowerCase() === "z" && (e.ctrlKey || e.metaKey)){
+    e.preventDefault(); document.getElementById("undo").click(); return;
+  }
+  if (k >= "1" && k <= "9"){ v.playbackRate = [0.25,0.5,1,1.5,2,3,4,6,8][+k - 1]; return; }
+
+  const label = BY_KEY[k.toLowerCase()];
+  if (label){ e.preventDefault(); toggleClass(label); }
+});
+
+// ---------------------------------------------------------------------------
+// validation — the same rules evaluate.py enforces
+// ---------------------------------------------------------------------------
+function problems(){
+  const en = entry(); if (!en) return [];
+  const out = [];
+  const byLabel = {};
+  for (const [s, e, l] of en.events){
+    if (!(s < e)) out.push(`${l}: need start < end (${s.toFixed(3)}, ${e.toFixed(3)})`);
+    if (e > en.duration + 0.5) out.push(`${l}: end ${e.toFixed(3)} past duration`);
+    (byLabel[l] = byLabel[l] || []).push([s, e]);
+  }
+  for (const [l, arr] of Object.entries(byLabel)){
+    arr.sort((a, b) => a[0] - b[0]);
+    for (let i = 1; i < arr.length; i++){
+      if (arr[i][0] < arr[i-1][1]){
+        out.push(`${l}: overlapping segments ${arr[i-1][0].toFixed(2)}-${arr[i-1][1].toFixed(2)} and ${arr[i][0].toFixed(2)}-${arr[i][1].toFixed(2)}`);
+      }
+    }
+  }
+  return out;
+}
+
+function warn(msg){
+  document.getElementById("warn").textContent = msg;
+  if (msg) setTimeout(() => {
+    if (document.getElementById("warn").textContent === msg) render();
+  }, 2500);
+}
+
+// ---------------------------------------------------------------------------
+// render
+// ---------------------------------------------------------------------------
+function render(){
+  const en = entry();
+
+  // class list
+  const host = document.getElementById("classes"); host.innerHTML = "";
+  for (const [key, label, colour] of CLASSES){
+    const n = en ? en.events.filter(ev => ev[2] === label).length : 0;
+    const armed = state.open[label] !== undefined;
+    const d = document.createElement("div");
+    d.className = "cls" + (armed ? " armed" : "");
+    d.innerHTML = `<span class="key">${key}</span>
+      <span class="swatch" style="background:${colour}"></span>
+      <span class="nm">${label}</span>
+      <span class="ct">${armed ? "open @ " + state.open[label].toFixed(2) : (n || "")}</span>`;
+    d.onclick = () => toggleClass(label);
+    host.appendChild(d);
+  }
+
+  // timeline
+  const tl = document.getElementById("tl");
+  [...tl.querySelectorAll(".seg")].forEach(x => x.remove());
+  if (en && state.duration){
+    const lanes = {};
+    let next = 0;
+    en.events.forEach(([s, e, l]) => {
+      if (lanes[l] === undefined) lanes[l] = next++;
+      const d = document.createElement("div");
+      d.className = "seg";
+      d.style.left = (s / state.duration * 100) + "%";
+      d.style.width = Math.max(0.3, (e - s) / state.duration * 100) + "%";
+      d.style.top = (2 + (lanes[l] % 4) * 13) + "px";
+      d.style.background = COLOUR[l];
+      d.title = `${l} ${s.toFixed(3)}–${e.toFixed(3)}`;
+      tl.appendChild(d);
+    });
+    for (const [l, s] of Object.entries(state.open)){
+      const d = document.createElement("div");
+      d.className = "seg open";
+      d.style.left = (s / state.duration * 100) + "%";
+      d.style.width = Math.max(0.3, (v.currentTime - s) / state.duration * 100) + "%";
+      d.style.top = "2px";
+      d.style.background = COLOUR[l];
+      tl.appendChild(d);
+    }
+  }
+
+  // segment list
+  const segs = document.getElementById("segs"); segs.innerHTML = "";
+  if (en){
+    en.events.forEach(([s, e, l], i) => {
+      const d = document.createElement("div"); d.className = "item";
+      d.innerHTML = `<span class="swatch" style="background:${COLOUR[l]}"></span>
+        <span class="t">${s.toFixed(3)} → ${e.toFixed(3)} <b>${l}</b>
+        <span class="ct">(${(e-s).toFixed(2)}s)</span></span>`;
+      d.querySelector(".t").onclick = () => seek(s);
+      const del = document.createElement("button");
+      del.className = "danger"; del.textContent = "×";
+      del.onclick = () => removeSegment(i);
+      d.appendChild(del);
+      segs.appendChild(d);
+    });
+  }
+  const clips = Object.keys(state.data).length;
+  const total = Object.values(state.data).reduce((n, x) => n + x.events.length, 0);
+  document.getElementById("segcount").textContent =
+    `${en ? en.events.length : 0} here · ${total} across ${clips} clip(s)`;
+
+  const p = problems();
+  document.getElementById("warn").textContent =
+    p.length ? "⚠ " + p[0] + (p.length > 1 ? ` (+${p.length - 1} more)` : "") : "";
+  tick();
+}
+
+// ---------------------------------------------------------------------------
+// export / import
+// ---------------------------------------------------------------------------
+function build(){
+  const out = {};
+  for (const [name, en] of Object.entries(state.data)){
+    out[name] = {
+      duration: +(en.duration.toFixed(3)),
+      fps: +(en.fps || fps()),
+      events: en.events
+        .slice()
+        .sort((a, b) => a[0] - b[0] || a[1] - b[1])
+        .map(([s, e, l]) => [+s.toFixed(3), +e.toFixed(3), l]),
+    };
+  }
+  return out;
+}
+
+document.getElementById("dl").onclick = () => {
+  const blob = new Blob([JSON.stringify(build(), null, 1)],
+                        {type: "application/json"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = "ground_truth.json"; a.click();
+};
+document.getElementById("copy").onclick = async () => {
+  await navigator.clipboard.writeText(JSON.stringify(build(), null, 1));
+  warn("Copied.");
+};
+document.getElementById("load").addEventListener("change", e => {
+  const f = e.target.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    try {
+      const d = JSON.parse(r.result);
+      for (const [name, en] of Object.entries(d)){
+        state.data[name] = {
+          duration: en.duration || 0,
+          fps: en.fps || 25,
+          events: (en.events || []).map(([s, e, l]) => [+s, +e, l]),
+        };
+      }
+      warn(`Loaded ${Object.keys(d).length} clip(s).`);
+      render();
+    } catch (err){ warn("Could not parse that JSON: " + err.message); }
+  };
+  r.readAsText(f);
+});
+
+fpsEl.addEventListener("change", () => {
+  const en = entry(); if (en) en.fps = fps();
+  render();
+});
+
+render();
+</script>
+</body>
+</html>
