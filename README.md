@@ -3,10 +3,13 @@
 Traffic event detection (Part A) and causal accident anticipation (Part B) from
 a fixed road camera.
 
-**Status: CP0 — foundation.** The skeleton, budget manager, perception pass,
-cache and zone tooling are in place and the package is submittable. No event
-rule is implemented yet, so `detect_events` returns `[]` and `RiskEstimator`
-returns `0.0`. See [Current state](#current-state).
+**Status: CP1 — four rule classes implemented against synthetic fixtures.**
+The foundation (budget manager, perception pass, cache, zone tooling) is from
+CP0. `congestion`, `stopped_vehicle`, `jaywalking` and `wrong_way` are now
+implemented and tested, plus an HSV traffic-light classifier and a ground-truth
+labelling tool. **No real footage has been seen yet**: `config/zones.json` is
+still un-authored, so the rules receive `zones=None` and emit nothing, and every
+threshold is a placeholder. See [Current state](#current-state).
 
 ---
 
@@ -43,7 +46,11 @@ src/
   tracks.py              the tracks table schema
   cache.py               perception cache (dev tool; never a correctness dependency)
   perception.py          STAGE 1: video -> tracks
-  rules.py               STAGE 2: tracks + zones -> raw segments  (empty at CP0)
+  thresholds.py          EVERY rule threshold, each with a calibration note
+  signal.py              traffic-light ROI -> red / amber / green / unknown
+  rules/                 STAGE 2: tracks + zones -> raw frame segments
+    congestion.py  stopped_vehicle.py  jaywalking.py  wrong_way.py
+    zoneindex.py         vectorised zone membership for a whole table
   postprocess.py         STAGE 3: merge, de-blip, guarantee no same-class overlap
   pipeline.py            Part A orchestration
   risk/                  STAGE B: causal estimator, ISOLATED from everything above
@@ -52,11 +59,14 @@ tools/
   annotate.html          click zones onto a frame, download zones.json (zero setup)
   draw_zones.py          render zones.json over a frame, to check it by eye
   validate_zones.py      fail loudly on a half-authored config
+  label.html             scrub a clip, mark [start, end, class], export GT
   bench.py               seconds-per-video-second, per stage
   make_synthetic_clip.py throwaway clip for timing before real samples exist
 scripts/offline_check.py proves the pipeline completes with the network blocked
 weights/download.sh      fetch weights once, before the offline run
 tests/                   unit + end-to-end-through-the-real-harness
+  fixtures/synthetic_scene.py   an invented intersection in the zones schema
+  fixtures/synthetic_tracks.py  a track builder with the tracker's failure modes
 ```
 
 ### The three stages, and why they are separate
@@ -309,14 +319,56 @@ two runs agree.
 | `tools/extract_frames.py` + annotation workflow | done |
 | `zones.json` schema + loader + geometry helpers | done, unit-tested |
 | perception pass with disk cache | done |
-| `solution.py` wired end to end | done — `detect_events` → `[]`, risk → `0.0` |
+| `solution.py` wired end to end | done |
 | `evaluate.py --validate-only` passing | done |
-| **event rules (Stage 2)** | **not started — deliberate** |
 
-Stage 2 is empty because every rule depends on scene geometry that does not
-exist yet. `CLASSES` is derived from the rule registry, so it is currently empty
-and nothing is emitted. That is the correct floor: a class we emit that never
-occurs scores 0 *and* enlarges Part A's class set.
+| CP1 deliverable | status |
+|---|---|
+| synthetic scene fixture | done, validates through the real validator |
+| synthetic track generator + tracker failure modes | done |
+| `stopped_vehicle`, `wrong_way`, `jaywalking`, `congestion` | **implemented**, tested clean and degraded |
+| traffic-light classifier | done, degrades to "no signal available" |
+| labelling tool | done, output scored through the real `evaluate.py` |
+| **anything validated against real footage** | **none** |
+
+### Rules are written; they are not calibrated
+
+Every rule is tested against `tests/fixtures/`, which is an **invented** scene
+and **invented** tracks. That proves the LOGIC is right — including against id
+switches, dropouts, occlusions and bbox jitter. It proves nothing about this
+camera.
+
+Concretely, when the real clips land:
+
+- **`config/zones.json` is still un-authored**, so `_get_zones` returns `None`,
+  every rule emits nothing, and the pipeline produces `[]`. That is deliberate
+  and safe, not a bug — but it means Part A scores 0 until the geometry is drawn.
+- **Every pixel and px/s threshold in `src/thresholds.py` is a guess.** The
+  synthetic scene's perspective is a linear widening, not a projective mapping,
+  so pixels-per-metre is fiction. Speed thresholds are pixels over time and
+  inherit the problem twice.
+- Only `stopped_vehicle.min_duration_sec = 10.0` has real authority: the task
+  PDF defines it.
+
+The retuning loop is cheap by design: Stage 2 runs off the cached tracks in
+~0.6 s, so a threshold sweep against a labelled dev set costs seconds, not a
+detector re-run. That is what the CP0 cache was for.
+
+### What will need attention first
+
+1. **`stopped_vehicle.speed_px_s`** — measured against synthetic jitter, where a
+   stationary vehicle shows ~5.6 × jitter_px of apparent speed. Real box wobble
+   will differ, and it varies with object size, so near-field and far-field
+   vehicles need different treatment. A perspective-scaled threshold is the
+   obvious upgrade.
+2. **`congestion`'s queue-zone discriminator** — it works only if the real
+   `signal_queue_zones` are drawn generously. Draw them too small and every red
+   phase becomes congestion.
+3. **`wrong_way` and the intersection box** — in the synthetic scene the NS lanes
+   cover the box, so turns through it are judged against an NS lane direction. A
+   real config that leaves the box laneless changes that entirely.
+4. **`congestion`'s direction grouping** — lanes are grouped by clustering their
+   direction arrows, so a sloppily drawn arrow puts a lane in the wrong group.
 
 ## Tests
 
