@@ -1,0 +1,104 @@
+{
+  "_README": [
+    "SCENE GEOMETRY -- AUTHORED BY HAND. Nothing here is guessed or inferred.",
+    "Every geometric value below is null on purpose. The starter kit promised a",
+    "samples/camera.md describing the scene; it does not exist, so this file is",
+    "the only description of the scene the pipeline has.",
+    "",
+    "HOW TO FILL IT IN:",
+    "  1. python tools/extract_frames.py --video samples/<clip>.mp4 --out frames/",
+    "  2. open tools/annotate.html in a browser (no install, runs from file://),",
+    "     load that frame, draw every shape, press Download zones.json, and move",
+    "     the downloaded file over this one.",
+    "  3. python tools/draw_zones.py --image frames/<clip>_f000000.png --zones config/zones.json --out check.png",
+    "     Look at check.png. Do not trust this file until you have.",
+    "  4. python tools/validate_zones.py --zones config/zones.json",
+    "     Fails loudly while any null remains. The pipeline runs this on load.",
+    "",
+    "COORDINATES are pixels in the frame named by authored_against, origin at",
+    "the TOP-LEFT, x right, y DOWN. If you re-author against a different",
+    "resolution, update authored_against and the loader will rescale."
+  ],
+
+  "schema_version": 1,
+
+  "authored_against": {
+    "_draw": "Fill from the frame you annotated. The loader rescales every coordinate by image_width/height if the video resolution differs.",
+    "image_width": null,
+    "image_height": null,
+    "source_video": null,
+    "source_frame_idx": null
+  },
+
+  "carriageway": [
+    {
+      "id": "main",
+      "_draw": "The drivable road surface as one polygon: kerb to kerb, INCLUDING the intersection box, EXCLUDING pavements, verges and parking bays. Anything outside this is not road, so a pedestrian here is on the carriageway. Trace it generously around the far end where perspective compresses it -- a few pixels there is many metres.",
+      "polygon": null
+    }
+  ],
+
+  "lanes": [
+    {
+      "id": "TODO_lane_1",
+      "_draw": "One polygon per lane of travel, from the frame edge (or the stop line) to where the lane leaves the frame. Lanes must not overlap; together they should tile the carriageway. Add one entry per lane -- duplicate this block.",
+      "polygon": null,
+      "_draw_direction": "Draw an ARROW along the lane, in the direction traffic legally flows. Two points: tail then head. The loader turns this into a unit vector; a track whose heading differs from it by more than the wrong_way threshold is driving against traffic.",
+      "direction_from": null,
+      "direction_to": null,
+      "_permitted": "Which manoeuvres are legal FROM this lane. Any of: through, left, right, u_turn. Read the painted arrows on the road surface. An empty list means unknown, not 'none'.",
+      "permitted_manoeuvres": [],
+      "_governed": "id of the stop_lines entry this lane must stop at, or null if this lane has no stop line in frame.",
+      "governed_by_stop_line": null
+    }
+  ],
+
+  "stop_lines": [
+    {
+      "id": "TODO_stopline_1",
+      "_draw": "The painted transverse bar vehicles must stop behind. Two points, LEFT-TO-RIGHT AS SEEN BY THE APPROACHING DRIVER. The orientation fixes the sign of the crossing test, so do not reverse it later.",
+      "segment": null,
+      "_approach": "Which signed side approaching vehicles start on, +1 or -1, per src.geometry.side_of_line with the segment as authored. annotate.html computes this for you: after the two bar clicks, click once where a waiting car would sit.",
+      "approach_side": null,
+      "governs_lanes": []
+    }
+  ],
+
+  "crossings": [
+    {
+      "id": "TODO_crossing_1",
+      "_draw": "The pedestrian crossing surface (zebra bars or the marked corridor) as a polygon. A pedestrian inside this is NOT jaywalking; a vehicle inside it while a pedestrian is on it is failure_to_yield.",
+      "polygon": null
+    }
+  ],
+
+  "signal_queue_zones": [
+    {
+      "id": "TODO_queue_1",
+      "_draw": "Where vehicles legitimately sit still waiting for a green: roughly the last few car lengths before each stop line. stopped_vehicle is suppressed inside this polygon, otherwise every red phase becomes a false positive. Err on the LARGE side -- a missed stopped_vehicle costs one FN, a queue full of them costs many FPs.",
+      "polygon": null,
+      "lanes": []
+    }
+  ],
+
+  "traffic_lights": [
+    {
+      "id": "TODO_signal_1",
+      "_draw": "Tight box around the signal head's lamps only, as [x1, y1, x2, y2]. Exclude the housing and sky. If no signal is visible in frame, leave this list EMPTY -- do not invent one; the red_light and stop_line rules will then have to infer phase from traffic behaviour instead.",
+      "roi": null,
+      "controls_lanes": []
+    }
+  ],
+
+  "lane_markings": [
+    {
+      "id": "TODO_marking_1",
+      "_draw": "Longitudinal painted lines, as a two-point segment each. Split a line into several entries where its style changes. style must be one of: solid, dashed, double_solid. Only crossing a solid or double_solid is solid_line_crossing.",
+      "segment": null,
+      "style": null,
+      "separates": []
+    }
+  ],
+
+  "notes": "Free text: anything about the scene a rule author needs and cannot see from the geometry alone (e.g. 'the far approach is one-way', 'the signal is out of frame to the left')."
+}

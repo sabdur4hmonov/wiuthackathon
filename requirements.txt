@@ -1,0 +1,19 @@
+# Harness dependencies (from the starter kit, do not remove)
+numpy>=1.24
+opencv-python-headless>=4.8
+
+# Detector + tracker. These are CPU-agnostic; on the evaluation box torch picks
+# up the CUDA build automatically. Install the CUDA wheel there if needed:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+torch>=2.2
+torchvision>=0.17
+ultralytics>=8.3.0
+
+# ByteTrack's linear assignment. Ultralytics prefers `lap` and falls back to
+# scipy.optimize.linear_sum_assignment when it is absent. scipy is required
+# because `lap` needs a C compiler and has no Windows wheel for 3.11+; `lap` is
+# left optional so the eval box can use it if it builds.
+scipy>=1.11
+
+# Dev only
+pytest>=8.0

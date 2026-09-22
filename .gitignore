@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv*/
+*.egg-info/
+.pytest_cache/
+
+# Model weights: fetched by weights/download.sh, or committed deliberately.
+# Un-ignore whatever you actually ship.
+weights/*.pt
+weights/.torch/
+!weights/download.sh
+
+# Sample videos are not ours to redistribute
+samples/*.mp4
+samples/*.MP4
+
+# Working output
+frames/
+check*.png
+.runs/
+# Anchored to the repo root: an unanchored pattern also swallows
+# examples/predictions.json, which is part of the starter kit.
+/predictions*.json
+!/predictions_samples.json
+/bench*.json

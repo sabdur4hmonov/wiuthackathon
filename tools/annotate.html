@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<!--
+  Zone annotator for config/zones.json — open this file directly in a browser.
+
+  Zero setup: no server, no install, no npm. It is a single file that runs from
+  file://. We do NOT use an OpenCV window because requirements.txt pins
+  opencv-python-headless, which ships without GUI support.
+
+  Workflow:
+    1. python tools/extract_frames.py --video samples/<clip>.mp4 --out frames/
+    2. open tools/annotate.html, load frames/<clip>_f000000.png
+    3. draw every shape, Download zones.json, move it over config/zones.json
+    4. python tools/validate_zones.py && python tools/draw_zones.py ...
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Zone Annotator</title>
+<style>
+  :root{
+    --bg:#11131a; --panel:#181b25; --line:#2a2f3e; --fg:#e6e9f2; --mut:#9aa3bb;
+    --accent:#5b9cff; --ok:#3ecf8e; --warn:#ffb648; --bad:#ff6b6b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:13px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;
+       display:flex;height:100vh;overflow:hidden}
+  #side{width:330px;flex:0 0 330px;background:var(--panel);
+        border-right:1px solid var(--line);overflow-y:auto;padding:12px}
+  #stage{flex:1;position:relative;overflow:hidden;background:#0b0d12}
+  canvas{position:absolute;top:0;left:0;cursor:crosshair}
+  h1{font-size:14px;margin:0 0 10px}
+  h2{font-size:12px;color:var(--mut);margin:16px 0 6px;
+     text-transform:uppercase;letter-spacing:.08em}
+  button{background:#232839;color:var(--fg);border:1px solid var(--line);
+         border-radius:5px;padding:5px 9px;cursor:pointer;font:inherit;font-size:12px}
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#07101f;font-weight:700}
+  button.danger{border-color:var(--bad);color:var(--bad)}
+  select,input[type=text]{background:#0e1017;color:var(--fg);border:1px solid var(--line);
+         border-radius:5px;padding:4px 6px;font:inherit;width:100%}
+  .row{display:flex;gap:6px;align-items:center;margin:6px 0;flex-wrap:wrap}
+  .kind{display:block;width:100%;text-align:left;margin:3px 0;padding:6px 8px}
+  .kind.active{background:var(--accent);color:#07101f;border-color:var(--accent);font-weight:700}
+  .kind .n{float:right;opacity:.75}
+  .hint{color:var(--mut);font-size:11.5px;margin:6px 0;white-space:pre-wrap}
+  .item{border:1px solid var(--line);border-radius:5px;padding:6px;margin:5px 0;background:#0e1017}
+  .item .hd{display:flex;justify-content:space-between;align-items:center;gap:6px}
+  .item .nm{font-weight:700;color:var(--accent);word-break:break-all}
+  .pill{display:inline-block;padding:1px 6px;border-radius:9px;font-size:10.5px;
+        border:1px solid var(--line);color:var(--mut)}
+  .pill.done{border-color:var(--ok);color:var(--ok)}
+  .pill.todo{border-color:var(--warn);color:var(--warn)}
+  label.ck{display:inline-flex;gap:4px;align-items:center;font-size:11.5px;color:var(--mut)}
+  #status{position:absolute;left:10px;bottom:10px;background:#000c;padding:6px 10px;
+          border-radius:6px;color:var(--mut);font-size:12px;pointer-events:none}
+  #zoomi{position:absolute;right:10px;bottom:10px;background:#000c;padding:6px 10px;
+         border-radius:6px;color:var(--mut);font-size:12px;pointer-events:none}
+</style>
+</head>
+<body>
+<div id="side">
+  <h1>Zone Annotator</h1>
+  <div class="row">
+    <input type="file" id="img" accept="image/png,image/jpeg" style="font-size:11px">
+  </div>
+  <div class="hint" id="imginfo">Load a frame from frames/ first.</div>
+
+  <h2>Draw</h2>
+  <div id="kinds"></div>
+  <div class="hint" id="kindhint"></div>
+
+  <div class="row">
+    <button id="finish" class="primary">Finish shape (Enter)</button>
+    <button id="undo">Undo pt (Ctrl+Z)</button>
+    <button id="cancel">Cancel (Esc)</button>
+  </div>
+
+  <h2>Shapes</h2>
+  <div id="items"></div>
+
+  <h2>Export</h2>
+  <div class="row">
+    <button id="dl" class="primary">Download zones.json</button>
+    <button id="copy">Copy JSON</button>
+  </div>
+  <div class="row"><button id="reset" class="danger">Clear all shapes</button></div>
+  <div class="hint">Move the downloaded file over <b>config/zones.json</b>, then run
+<b>python tools/validate_zones.py</b>
+<b>python tools/draw_zones.py --image &lt;frame&gt; --zones config/zones.json --out check.png</b>
+
+Wheel = zoom, drag with middle/right button or Space = pan.</div>
+</div>
+
+<div id="stage">
+  <canvas id="cv"></canvas>
+  <div id="status">no image</div>
+  <div id="zoomi"></div>
+</div>
+
+<script>
+"use strict";
+// ---------------------------------------------------------------------------
+// shape kinds -> the zones.json section each one fills
+// ---------------------------------------------------------------------------
+const KINDS = {
+  carriageway: {
+    geom: "polygon", colour: "#5b9cff", label: "Carriageway",
+    hint: "Kerb to kerb, INCLUDING the intersection box, EXCLUDING pavements and\nparking bays. Click each corner, then Finish. Trace the far end carefully:\nperspective makes a few pixels there worth many metres."
+  },
+  lanes: {
+    geom: "polygon+arrow", colour: "#3ecf8e", label: "Lane",
+    hint: "One polygon per lane of travel; lanes must not overlap.\nAfter the polygon you draw an ARROW: click the TAIL then the HEAD, pointing\nthe way traffic legally flows. Then set permitted manoeuvres."
+  },
+  stop_lines: {
+    geom: "segment+side", colour: "#ffb648", label: "Stop line",
+    hint: "Two clicks along the painted bar, LEFT-TO-RIGHT as the approaching driver\nsees it. Then one more click where a WAITING CAR would sit — that fixes\napproach_side, which gives the crossing test its direction."
+  },
+  crossings: {
+    geom: "polygon", colour: "#c792ea", label: "Crossing",
+    hint: "The pedestrian crossing surface. A pedestrian inside this is NOT\njaywalking; a vehicle inside while a pedestrian is on it is failure_to_yield."
+  },
+  signal_queue_zones: {
+    geom: "polygon", colour: "#ff9f6b", label: "Signal queue",
+    hint: "Where cars legitimately sit still on a red — the last few car lengths\nbefore each stop line. Err LARGE: a missed stopped_vehicle costs one FN,\na whole queue of false ones costs many FPs."
+  },
+  traffic_lights: {
+    geom: "box", colour: "#ff6b6b", label: "Signal ROI",
+    hint: "Two clicks: opposite corners of a tight box around the LAMPS only.\nIf no signal is visible in frame, draw nothing here — leave the list empty\nrather than inventing one."
+  },
+  lane_markings: {
+    geom: "segment", colour: "#e6e9f2", label: "Lane marking",
+    hint: "Two clicks along one painted longitudinal line. Split a line into several\nentries where its style changes. Only solid / double_solid can be violated."
+  },
+};
+
+const state = {
+  img: null, iw: 0, ih: 0,
+  kind: "carriageway",
+  pending: [],            // points of the shape being drawn
+  phase: 0,               // for multi-phase kinds (polygon then arrow, etc.)
+  shapes: {},             // kind -> [ {..} ]
+  view: {z: 1, x: 0, y: 0},
+  pan: null,
+  spacedown: false,
+};
+for (const k of Object.keys(KINDS)) state.shapes[k] = [];
+
+const cv = document.getElementById("cv");
+const ctx = cv.getContext("2d");
+const stage = document.getElementById("stage");
+
+// ---------------------------------------------------------------------------
+// view helpers
+// ---------------------------------------------------------------------------
+function resize(){
+  cv.width = stage.clientWidth; cv.height = stage.clientHeight; draw();
+}
+window.addEventListener("resize", resize);
+
+function toImg(px, py){
+  return [(px - state.view.x) / state.view.z, (py - state.view.y) / state.view.z];
+}
+function toScr(ix, iy){
+  return [ix * state.view.z + state.view.x, iy * state.view.z + state.view.y];
+}
+function fit(){
+  if (!state.img) return;
+  const z = Math.min(cv.width / state.iw, cv.height / state.ih);
+  state.view.z = z;
+  state.view.x = (cv.width - state.iw * z) / 2;
+  state.view.y = (cv.height - state.ih * z) / 2;
+}
+
+// ---------------------------------------------------------------------------
+// drawing
+// ---------------------------------------------------------------------------
+function draw(){
+  ctx.fillStyle = "#0b0d12"; ctx.fillRect(0, 0, cv.width, cv.height);
+  if (!state.img) return;
+  ctx.imageSmoothingEnabled = state.view.z < 1;
+  ctx.drawImage(state.img, state.view.x, state.view.y,
+                state.iw * state.view.z, state.ih * state.view.z);
+
+  for (const [kind, arr] of Object.entries(state.shapes)){
+    const K = KINDS[kind];
+    arr.forEach((s, i) => drawShape(s, K, kind, i, false));
+  }
+  if (state.pending.length) drawPending();
+  document.getElementById("zoomi").textContent =
+    `${Math.round(state.view.z * 100)}%  ·  ${state.iw}×${state.ih}`;
+}
+
+function poly(pts, colour, close, fill){
+  if (!pts.length) return;
+  ctx.beginPath();
+  pts.forEach((p, i) => {
+    const [x, y] = toScr(p[0], p[1]);
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  });
+  if (close) ctx.closePath();
+  if (fill){ ctx.fillStyle = colour + "26"; ctx.fill(); }
+  ctx.strokeStyle = colour; ctx.lineWidth = 2; ctx.stroke();
+}
+function dots(pts, colour){
+  pts.forEach(p => {
+    const [x, y] = toScr(p[0], p[1]);
+    ctx.beginPath(); ctx.arc(x, y, 3.5, 0, 7);
+    ctx.fillStyle = colour; ctx.fill();
+    ctx.strokeStyle = "#000"; ctx.lineWidth = 1; ctx.stroke();
+  });
+}
+function arrow(a, b, colour){
+  const [x1, y1] = toScr(a[0], a[1]), [x2, y2] = toScr(b[0], b[1]);
+  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
+  ctx.strokeStyle = colour; ctx.lineWidth = 3; ctx.stroke();
+  const ang = Math.atan2(y2 - y1, x2 - x1), h = 13;
+  ctx.beginPath(); ctx.moveTo(x2, y2);
+  ctx.lineTo(x2 - h * Math.cos(ang - .4), y2 - h * Math.sin(ang - .4));
+  ctx.lineTo(x2 - h * Math.cos(ang + .4), y2 - h * Math.sin(ang + .4));
+  ctx.closePath(); ctx.fillStyle = colour; ctx.fill();
+}
+function tag(pt, text, colour){
+  const [x, y] = toScr(pt[0], pt[1]);
+  ctx.font = "bold 11px ui-monospace,monospace";
+  const w = ctx.measureText(text).width + 8;
+  ctx.fillStyle = "#000b"; ctx.fillRect(x + 6, y - 16, w, 15);
+  ctx.fillStyle = colour; ctx.fillText(text, x + 10, y - 5);
+}
+
+function drawShape(s, K, kind, i){
+  const c = K.colour;
+  if (s.polygon){ poly(s.polygon, c, true, true); dots(s.polygon, c); }
+  if (s.segment){ poly(s.segment, c, false, false); dots(s.segment, c); }
+  if (s.roi){
+    const [x1, y1, x2, y2] = s.roi;
+    poly([[x1,y1],[x2,y1],[x2,y2],[x1,y2]], c, true, true);
+  }
+  if (s.direction_from && s.direction_to) arrow(s.direction_from, s.direction_to, c);
+  if (s.approach_point) dots([s.approach_point], "#fff");
+  const anchor = s.polygon ? s.polygon[0]
+              : s.segment ? s.segment[0]
+              : s.roi ? [s.roi[0], s.roi[1]]
+              : null;
+  if (anchor) tag(anchor, s.id, c);
+}
+
+function drawPending(){
+  const K = KINDS[state.kind], c = K.colour;
+  const g = K.geom;
+  if (g === "polygon" || (g === "polygon+arrow" && state.phase === 0)){
+    poly(state.pending, c, false, false);
+  } else if (g === "polygon+arrow" && state.phase === 1 && state.pending.length === 1){
+    // arrow tail placed, waiting for head
+  } else {
+    poly(state.pending, c, false, false);
+  }
+  dots(state.pending, c);
+}
+
+// ---------------------------------------------------------------------------
+// input
+// ---------------------------------------------------------------------------
+cv.addEventListener("mousedown", e => {
+  if (e.button === 1 || e.button === 2 || state.spacedown){
+    state.pan = {x: e.offsetX, y: e.offsetY, vx: state.view.x, vy: state.view.y};
+    e.preventDefault(); return;
+  }
+  if (!state.img || e.button !== 0) return;
+  const [ix, iy] = toImg(e.offsetX, e.offsetY);
+  if (ix < 0 || iy < 0 || ix > state.iw || iy > state.ih) return;
+  state.pending.push([Math.round(ix * 10) / 10, Math.round(iy * 10) / 10]);
+  autoFinish();
+  draw(); status();
+});
+cv.addEventListener("contextmenu", e => e.preventDefault());
+window.addEventListener("mousemove", e => {
+  if (!state.pan) return;
+  state.view.x = state.pan.vx + (e.offsetX - state.pan.x);
+  state.view.y = state.pan.vy + (e.offsetY - state.pan.y);
+  draw();
+});
+window.addEventListener("mouseup", () => { state.pan = null; });
+cv.addEventListener("wheel", e => {
+  e.preventDefault();
+  if (!state.img) return;
+  const [ix, iy] = toImg(e.offsetX, e.offsetY);
+  const f = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+  state.view.z = Math.max(0.05, Math.min(40, state.view.z * f));
+  const [nx, ny] = toScr(ix, iy);
+  state.view.x += e.offsetX - nx; state.view.y += e.offsetY - ny;
+  draw();
+}, {passive: false});
+
+window.addEventListener("keydown", e => {
+  if (e.code === "Space"){ state.spacedown = true; cv.style.cursor = "grab"; }
+  if (e.key === "Enter"){ finish(); }
+  if (e.key === "Escape"){ state.pending = []; state.phase = 0; draw(); status(); }
+  if (e.key.toLowerCase() === "z" && (e.ctrlKey || e.metaKey)){
+    state.pending.pop(); draw(); status();
+  }
+});
+window.addEventListener("keyup", e => {
+  if (e.code === "Space"){ state.spacedown = false; cv.style.cursor = "crosshair"; }
+});
+
+document.getElementById("img").addEventListener("change", e => {
+  const f = e.target.files[0]; if (!f) return;
+  const im = new Image();
+  im.onload = () => {
+    state.img = im; state.iw = im.naturalWidth; state.ih = im.naturalHeight;
+    document.getElementById("imginfo").innerHTML =
+      `<b>${f.name}</b><br>${state.iw} × ${state.ih} px — this becomes ` +
+      `authored_against.`;
+    fit(); draw(); status();
+  };
+  im.src = URL.createObjectURL(f);
+});
+
+// ---------------------------------------------------------------------------
+// shape lifecycle
+// ---------------------------------------------------------------------------
+function needed(){
+  const g = KINDS[state.kind].geom;
+  if (g === "segment") return 2;
+  if (g === "box") return 2;
+  if (g === "segment+side") return 3;          // 2 for the bar, 1 for the side
+  if (g === "polygon+arrow") return state.phase === 0 ? Infinity : 2;
+  return Infinity;                              // polygon: user says when
+}
+function autoFinish(){
+  const n = needed();
+  if (n !== Infinity && state.pending.length >= n) finish();
+}
+
+function nextId(kind){
+  const base = {carriageway:"main", lanes:"lane", stop_lines:"stopline",
+                crossings:"crossing", signal_queue_zones:"queue",
+                traffic_lights:"signal", lane_markings:"mark"}[kind];
+  const n = state.shapes[kind].length + 1;
+  return kind === "carriageway" && n === 1 ? "main" : `${base}_${n}`;
+}
+
+function finish(){
+  const kind = state.kind, K = KINDS[kind], g = K.geom, p = state.pending;
+  if (g === "polygon+arrow" && state.phase === 0){
+    if (p.length < 3){ status("need at least 3 points"); return; }
+    state._poly = p.slice(); state.pending = []; state.phase = 1;
+    status("now click the arrow TAIL then HEAD (direction of legal travel)");
+    draw(); return;
+  }
+  if (g === "polygon+arrow" && state.phase === 1){
+    if (p.length < 2) return;
+    state.shapes[kind].push({
+      id: nextId(kind), polygon: state._poly,
+      direction_from: p[0], direction_to: p[1],
+      permitted_manoeuvres: [], governed_by_stop_line: null,
+    });
+    state._poly = null; state.phase = 0;
+  } else if (g === "polygon"){
+    if (p.length < 3){ status("need at least 3 points"); return; }
+    state.shapes[kind].push({id: nextId(kind), polygon: p.slice(),
+                             lanes: kind === "signal_queue_zones" ? [] : undefined});
+  } else if (g === "segment"){
+    if (p.length < 2) return;
+    state.shapes[kind].push({id: nextId(kind), segment: [p[0], p[1]],
+                             style: null, separates: []});
+  } else if (g === "segment+side"){
+    if (p.length < 3) return;
+    state.shapes[kind].push({
+      id: nextId(kind), segment: [p[0], p[1]],
+      approach_point: p[2],
+      approach_side: sideOfLine(p[2], p[0], p[1]),
+      governs_lanes: [],
+    });
+  } else if (g === "box"){
+    if (p.length < 2) return;
+    const x1 = Math.min(p[0][0], p[1][0]), x2 = Math.max(p[0][0], p[1][0]);
+    const y1 = Math.min(p[0][1], p[1][1]), y2 = Math.max(p[0][1], p[1][1]);
+    state.shapes[kind].push({id: nextId(kind), roi: [x1, y1, x2, y2],
+                             controls_lanes: []});
+  }
+  state.pending = [];
+  renderItems(); draw(); status();
+}
+
+// Must match src.geometry.signed_distance_to_line's sign convention exactly:
+// cross = (b-a) x (p-a), image coords with y DOWN.
+function sideOfLine(p, a, b){
+  const cr = (b[0]-a[0])*(p[1]-a[1]) - (b[1]-a[1])*(p[0]-a[0]);
+  return cr > 0 ? 1 : -1;
+}
+
+// ---------------------------------------------------------------------------
+// sidebar
+// ---------------------------------------------------------------------------
+function renderKinds(){
+  const host = document.getElementById("kinds"); host.innerHTML = "";
+  for (const [k, K] of Object.entries(KINDS)){
+    const b = document.createElement("button");
+    b.className = "kind" + (k === state.kind ? " active" : "");
+    b.innerHTML = `${K.label}<span class="n">${state.shapes[k].length}</span>`;
+    b.onclick = () => { state.kind = k; state.pending = []; state.phase = 0;
+                        renderKinds(); draw(); status(); };
+    host.appendChild(b);
+  }
+  document.getElementById("kindhint").textContent = KINDS[state.kind].hint;
+}
+
+function laneIds(){ return state.shapes.lanes.map(l => l.id); }
+function stopIds(){ return state.shapes.stop_lines.map(s => s.id); }
+
+function renderItems(){
+  const host = document.getElementById("items"); host.innerHTML = "";
+  for (const [kind, arr] of Object.entries(state.shapes)){
+    arr.forEach((s, i) => {
+      const d = document.createElement("div"); d.className = "item";
+      const missing = [];
+      if (kind === "lanes" && !s.permitted_manoeuvres.length) missing.push("manoeuvres");
+      if (kind === "lane_markings" && !s.style) missing.push("style");
+      d.innerHTML = `<div class="hd"><span class="nm">${s.id}</span>
+        <span><span class="pill ${missing.length ? "todo" : "done"}">
+        ${missing.length ? "needs " + missing.join(", ") : KINDS[kind].label}</span></span></div>`;
+
+      const nm = document.createElement("input");
+      nm.type = "text"; nm.value = s.id;
+      nm.onchange = () => { s.id = nm.value.trim() || s.id; renderItems(); draw(); };
+      const r0 = document.createElement("div"); r0.className = "row";
+      r0.appendChild(nm); d.appendChild(r0);
+
+      if (kind === "lanes"){
+        const r = document.createElement("div"); r.className = "row";
+        ["through","left","right","u_turn"].forEach(m => {
+          const l = document.createElement("label"); l.className = "ck";
+          const c = document.createElement("input"); c.type = "checkbox";
+          c.checked = s.permitted_manoeuvres.includes(m);
+          c.onchange = () => {
+            s.permitted_manoeuvres = c.checked
+              ? [...s.permitted_manoeuvres, m]
+              : s.permitted_manoeuvres.filter(x => x !== m);
+            renderItems();
+          };
+          l.append(c, document.createTextNode(m)); r.appendChild(l);
+        });
+        d.appendChild(r);
+        d.appendChild(sel("stop line", stopIds(), s.governed_by_stop_line,
+                          v => { s.governed_by_stop_line = v || null; }, true));
+      }
+      if (kind === "lane_markings"){
+        d.appendChild(sel("style", ["solid","dashed","double_solid"], s.style,
+                          v => { s.style = v || null; renderItems(); }, true));
+        d.appendChild(multi("separates", laneIds(), s.separates,
+                            v => { s.separates = v; }));
+      }
+      if (kind === "stop_lines"){
+        d.appendChild(note(`approach_side = ${s.approach_side}`));
+        d.appendChild(multi("governs lanes", laneIds(), s.governs_lanes,
+                            v => { s.governs_lanes = v; }));
+      }
+      if (kind === "signal_queue_zones"){
+        d.appendChild(multi("lanes", laneIds(), s.lanes || [],
+                            v => { s.lanes = v; }));
+      }
+      if (kind === "traffic_lights"){
+        d.appendChild(multi("controls lanes", laneIds(), s.controls_lanes,
+                            v => { s.controls_lanes = v; }));
+      }
+
+      const del = document.createElement("button");
+      del.className = "danger"; del.textContent = "Delete"; del.style.marginTop = "6px";
+      del.onclick = () => { arr.splice(i, 1); renderKinds(); renderItems(); draw(); };
+      d.appendChild(del);
+      host.appendChild(d);
+    });
+  }
+  renderKinds();
+}
+
+function note(t){ const d = document.createElement("div");
+  d.className = "hint"; d.textContent = t; return d; }
+function sel(lbl, opts, val, cb, blank){
+  const r = document.createElement("div"); r.className = "row";
+  const s = document.createElement("select");
+  if (blank) s.appendChild(new Option("— " + lbl + " —", ""));
+  opts.forEach(o => s.appendChild(new Option(o, o)));
+  s.value = val || "";
+  s.onchange = () => cb(s.value);
+  r.appendChild(s); return r;
+}
+function multi(lbl, opts, val, cb){
+  const r = document.createElement("div"); r.className = "row";
+  r.appendChild(note(lbl + ":"));
+  opts.forEach(o => {
+    const l = document.createElement("label"); l.className = "ck";
+    const c = document.createElement("input"); c.type = "checkbox";
+    c.checked = val.includes(o);
+    c.onchange = () => cb(c.checked ? [...val, o] : val.filter(x => x !== o));
+    l.append(c, document.createTextNode(o)); r.appendChild(l);
+  });
+  if (!opts.length) r.appendChild(note("(none yet)"));
+  return r;
+}
+
+function status(msg){
+  const K = KINDS[state.kind];
+  const n = needed();
+  document.getElementById("status").textContent = msg
+    || (state.img
+        ? `${K.label}: ${state.pending.length} pt${state.pending.length === 1 ? "" : "s"}`
+          + (n === Infinity ? " — Enter to finish" : ` / ${n}`)
+        : "load an image");
+}
+
+// ---------------------------------------------------------------------------
+// export
+// ---------------------------------------------------------------------------
+function build(){
+  const S = state.shapes;
+  return {
+    schema_version: 1,
+    authored_against: {
+      image_width: state.iw || null,
+      image_height: state.ih || null,
+      source_video: null,
+      source_frame_idx: null,
+    },
+    carriageway: S.carriageway.map(s => ({id: s.id, polygon: s.polygon})),
+    lanes: S.lanes.map(s => ({
+      id: s.id, polygon: s.polygon,
+      direction_from: s.direction_from, direction_to: s.direction_to,
+      permitted_manoeuvres: s.permitted_manoeuvres,
+      governed_by_stop_line: s.governed_by_stop_line,
+    })),
+    stop_lines: S.stop_lines.map(s => ({
+      id: s.id, segment: s.segment, approach_side: s.approach_side,
+      governs_lanes: s.governs_lanes,
+    })),
+    crossings: S.crossings.map(s => ({id: s.id, polygon: s.polygon})),
+    signal_queue_zones: S.signal_queue_zones.map(s => ({
+      id: s.id, polygon: s.polygon, lanes: s.lanes || [],
+    })),
+    traffic_lights: S.traffic_lights.map(s => ({
+      id: s.id, roi: s.roi, controls_lanes: s.controls_lanes,
+    })),
+    lane_markings: S.lane_markings.map(s => ({
+      id: s.id, segment: s.segment, style: s.style, separates: s.separates,
+    })),
+    notes: "",
+  };
+}
+document.getElementById("dl").onclick = () => {
+  const blob = new Blob([JSON.stringify(build(), null, 2)], {type: "application/json"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = "zones.json"; a.click();
+};
+document.getElementById("copy").onclick = async () => {
+  await navigator.clipboard.writeText(JSON.stringify(build(), null, 2));
+  status("JSON copied");
+};
+document.getElementById("reset").onclick = () => {
+  if (!confirm("Delete every shape?")) return;
+  for (const k of Object.keys(KINDS)) state.shapes[k] = [];
+  state.pending = []; state.phase = 0; renderItems(); draw(); status();
+};
+document.getElementById("finish").onclick = finish;
+document.getElementById("undo").onclick = () => { state.pending.pop(); draw(); status(); };
+document.getElementById("cancel").onclick = () => {
+  state.pending = []; state.phase = 0; draw(); status();
+};
+
+renderItems(); resize(); status();
+</script>
+</body>
+</html>
