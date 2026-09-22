@@ -234,3 +234,53 @@ def test_polygon_area():
 def test_polyline_length():
     assert g.polyline_length(np.array([[0, 0], [3, 4], [3, 8]])) == pytest.approx(9.0)
     assert g.polyline_length(np.array([[0, 0]])) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# vectorised point-in-polygon must agree with the scalar one everywhere
+# ---------------------------------------------------------------------------
+def test_vectorised_agrees_with_scalar_on_a_random_sweep():
+    """Stage 2 uses the vectorised path; a divergence would silently change
+    which lane every track row is assigned to."""
+    rng = np.random.default_rng(4)
+    poly = [(100, 100), (900, 140), (860, 700), (300, 820), (120, 500)]
+    pts = rng.uniform(0, 1000, size=(4000, 2))
+    vec = g.points_in_polygon(pts, poly)
+    scal = np.array([g.point_in_polygon((float(a), float(b)), poly) for a, b in pts])
+    assert np.array_equal(vec, scal)
+
+
+def test_vectorised_agrees_on_vertices_and_edges():
+    poly = [(0, 0), (10, 0), (10, 10), (0, 10)]
+    pts = np.array([[0, 0], [10, 0], [10, 10], [0, 10],
+                    [5, 0], [10, 5], [5, 10], [0, 5],
+                    [5, 5], [-1, 5], [11, 5]], dtype=float)
+    vec = g.points_in_polygon(pts, poly)
+    scal = np.array([g.point_in_polygon((float(a), float(b)), poly) for a, b in pts])
+    assert np.array_equal(vec, scal)
+
+
+def test_vectorised_agrees_on_a_concave_polygon():
+    L = [(0, 0), (10, 0), (10, 4), (4, 4), (4, 10), (0, 10)]
+    rng = np.random.default_rng(9)
+    pts = rng.uniform(-2, 12, size=(2000, 2))
+    vec = g.points_in_polygon(pts, L)
+    scal = np.array([g.point_in_polygon((float(a), float(b)), L) for a, b in pts])
+    assert np.array_equal(vec, scal)
+
+
+def test_vectorised_edge_cases():
+    assert g.points_in_polygon(np.empty((0, 2)), SQUARE).shape == (0,)
+    assert not g.points_in_polygon(np.array([[0.0, 0.0]]), [(0, 0), (1, 1)]).any()
+
+
+def test_vectorised_is_actually_fast():
+    """The whole reason it exists. A Python loop here costs seconds per video."""
+    import time
+
+    rng = np.random.default_rng(1)
+    poly = [(100, 100), (900, 140), (860, 700), (300, 820), (120, 500)]
+    pts = rng.uniform(0, 1000, size=(40000, 2))
+    t0 = time.perf_counter()
+    g.points_in_polygon(pts, poly)
+    assert time.perf_counter() - t0 < 0.5

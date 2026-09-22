@@ -65,11 +65,47 @@ def point_in_polygon(pt: Point, poly: Polygon) -> bool:
 def points_in_polygon(pts: np.ndarray, poly: Polygon) -> np.ndarray:
     """Vectorised point_in_polygon for an (N, 2) array. Returns (N,) bool.
 
-    Edge cases are resolved by the scalar version so the two always agree.
+    Genuinely vectorised, not a loop over the scalar version: Stage 2 runs this
+    once per track row per zone polygon, and a Python-level loop there costs
+    seconds per video -- which would defeat the point of caching Stage 1 at all.
+    Both the on-edge test and the ray cast are reproduced here exactly as the
+    scalar version computes them, including its epsilon placement, and
+    tests/test_geometry.py asserts the two agree.
     """
     pts = np.asarray(pts, dtype=float).reshape(-1, 2)
-    return np.array([point_in_polygon((float(x), float(y)), poly) for x, y in pts],
-                    dtype=bool)
+    p = np.asarray(poly, dtype=float).reshape(-1, 2)
+    n = pts.shape[0]
+    if n == 0:
+        return np.zeros(0, dtype=bool)
+    if p.shape[0] < 3:
+        return np.zeros(n, dtype=bool)
+
+    x = pts[:, 0][:, None]        # (N, 1)
+    y = pts[:, 1][:, None]
+    ax, ay = p[:, 0][None, :], p[:, 1][None, :]              # (1, V) edge starts
+    bx = np.roll(p[:, 0], -1)[None, :]                       # edge ends
+    by = np.roll(p[:, 1], -1)[None, :]
+
+    # -- on an edge counts as inside (matches the scalar version) ----------
+    tol = 1e-6
+    cross = (bx - ax) * (y - ay) - (by - ay) * (x - ax)
+    scale = np.maximum(1.0, np.abs(bx - ax) + np.abs(by - ay))
+    dot = (x - ax) * (bx - ax) + (y - ay) * (by - ay)
+    sq_len = (bx - ax) ** 2 + (by - ay) ** 2
+    on_edge = ((np.abs(cross) <= tol * scale) & (dot >= -tol)
+               & (dot <= sq_len + tol)).any(axis=1)
+
+    # -- ray cast ----------------------------------------------------------
+    # The scalar version walks edges as (j, i) = (prev, current) and tests
+    # (yi > y) != (yj > y); rolling the other way here gives the same edge set.
+    jx, jy = np.roll(p[:, 0], 1)[None, :], np.roll(p[:, 1], 1)[None, :]
+    ix, iy = p[:, 0][None, :], p[:, 1][None, :]
+    straddles = (iy > y) != (jy > y)
+    x_cross = (jx - ix) * (y - iy) / (jy - iy + EPS) + ix
+    crossings = (straddles & (x < x_cross)).sum(axis=1)
+    inside = (crossings % 2) == 1
+
+    return inside | on_edge
 
 
 def _point_on_segment(pt: Point, seg: Segment, tol: float = 1e-6) -> bool:

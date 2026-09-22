@@ -15,7 +15,7 @@ author iterates on rules.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterator
 
 import numpy as np
@@ -59,6 +59,11 @@ class TrackTable:
     frame_stride: int
     complete: bool = True            # False when perception stopped on budget
     processed_until_sec: float = 0.0  # last timestamp actually looked at
+    # Per-instance scratch for derived views (class filters, zone membership).
+    # NOT part of the on-disk schema and never serialised: Stage 2 runs several
+    # rules over the same table and recomputing these per rule costs more than
+    # the rules themselves.
+    _memo: dict = field(default_factory=dict, compare=False, repr=False)
 
     # -- construction -------------------------------------------------------
     @classmethod
@@ -99,13 +104,23 @@ class TrackTable:
             yield int(tid), self.rows_for_track(int(tid))
 
     def of_classes(self, classes: frozenset[int]) -> "TrackTable":
-        """A view restricted to certain COCO classes, metadata preserved."""
+        """A view restricted to certain COCO classes, metadata preserved.
+
+        Memoised: several rules ask for the same subset, and each call would
+        otherwise copy the whole table again.
+        """
         if not len(self):
             return self
+        key = ("of_classes", tuple(sorted(classes)))
+        hit = self._memo.get(key)
+        if hit is not None:
+            return hit
         m = np.isin(self.col("cls").astype(np.int64), list(classes))
-        return TrackTable(self.data[m], self.fps, self.duration, self.n_frames,
+        view = TrackTable(self.data[m], self.fps, self.duration, self.n_frames,
                           self.width, self.height, self.frame_stride,
                           self.complete, self.processed_until_sec)
+        self._memo[key] = view
+        return view
 
     def vehicles(self) -> "TrackTable":
         return self.of_classes(VEHICLE_CLASSES)
