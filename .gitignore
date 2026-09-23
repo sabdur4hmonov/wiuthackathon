@@ -25,3 +25,7 @@ check*.png
 /predictions*.json
 !/predictions_samples.json
 /bench*.json
+
+# Website build products
+/web/node_modules/
+/web/dist/
