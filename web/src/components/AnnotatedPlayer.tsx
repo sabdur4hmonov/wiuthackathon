@@ -23,6 +23,7 @@ interface Props {
   seekToSec?: number;
   seekToken?: number;
   onTimeChange?: (seconds: number) => void;
+  onDurationChange?: (seconds: number) => void;
 }
 
 export function AnnotatedPlayer({
@@ -34,6 +35,7 @@ export function AnnotatedPlayer({
   seekToSec,
   seekToken,
   onTimeChange,
+  onDurationChange,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [time, setTime] = useState(0);
@@ -64,6 +66,14 @@ export function AnnotatedPlayer({
             src={videoUrl}
             controls
             playsInline
+            onLoadedMetadata={(event) => {
+              const seconds = event.currentTarget.duration;
+              if (Number.isFinite(seconds) && seconds > 0) onDurationChange?.(seconds);
+            }}
+            onDurationChange={(event) => {
+              const seconds = event.currentTarget.duration;
+              if (Number.isFinite(seconds) && seconds > 0) onDurationChange?.(seconds);
+            }}
             onTimeUpdate={(event) => {
               const nextTime = event.currentTarget.currentTime;
               setTime(nextTime);

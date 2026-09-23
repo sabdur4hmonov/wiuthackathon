@@ -1,4 +1,4 @@
-# Website and demo integration (Phase 1)
+# Website and demo integration
 
 This is the Codex-owned presentation/integration layer. It does not alter
 `solution.py`, `src/`, `config/zones.json`, model weights, `run_submission.py`,
@@ -16,7 +16,10 @@ The website consumes the official prediction shape:
 `[t_sec, score]`. The parser in `web/src/lib/predictions.ts` checks the 14
 official labels, interval ordering and same-class overlap, risk monotonicity,
 finite numeric values and score bounds. It tolerates absent `risk` with a
-warning, as the evaluator does. Extra harness fields such as `log` are ignored.
+warning, as the evaluator does. The live API strips harness `log` **before**
+responding. Published sample JSON must likewise be exported without logs;
+downloading raw harness JSON into the browser would expose diagnostics even if
+the parser ignored that field.
 The website additionally rejects path-like video keys, unsafe object keys
 (`__proto__`, `constructor`, `prototype`), and non-finite values.
 The organizer JSON does **not** have a provenance field: the caller supplies
@@ -27,9 +30,32 @@ data**, not inference or a real camera clip. It is never shown in Results or
 EDA as measured evidence. The existing root `predictions_samples.json` was
 generated from a synthetic clip and is also not presented as real footage.
 
+The Results section loads `web/public/samples/catalog.json`, currently an empty
+list. For a future authorized sample, run the unchanged harness on **one**
+video, check its errors and the official evaluator, then export only its
+sanitized prediction fields:
+
+```powershell
+python -m demo_api.sample_export --pred <raw-harness.json> --video <exact-file.mp4> --out <new-sanitized.json>
+python evaluate.py --pred <new-sanitized.json> --validate-only
+```
+
+Only after verifying camera provenance and redistribution permission, place
+the sanitized JSON (and optionally its permitted MP4) under `web/public/samples/`
+and add a catalog entry with `id`, `label`, `filename`, `predictionUrl`, and
+optional `videoUrl`. URLs must be same-origin `/samples/` paths. The sample
+loader rejects extra fields, wrong video keys, invalid event/risk data, unsafe
+paths and raw logs; it labels accepted data `VALIDATED REAL SAMPLE`. An empty
+catalog shows a clear no-results state, not a synthetic chart.
+
 ## Run locally
 
-Use Node.js 20.19+ and Python 3.10+ from the repository root:
+Use Node.js 20.19+ and Python 3.10+ from the repository root. On a clean
+machine, install Python and Node first. The disconnected API uses only the
+Python standard library; decoded-duration verification and EDA require
+`numpy` and `opencv-python-headless` from `requirements.txt`. Full ML setup
+also requires the remaining packages and weights, which are not installed by
+the website instructions.
 
 ```powershell
 cd web
@@ -54,7 +80,7 @@ cd web
 npm test
 npm run build
 cd ..
-python -m unittest demo_api.test_jobs -v
+python -m pytest demo_api
 python evaluate.py --pred predictions_samples.json --validate-only
 ```
 
@@ -121,6 +147,25 @@ directly to the public Internet in its current form.
 The UI currently shows upload activity and queued/running/completed/failed or
 awaiting-model state, not a fabricated percentage. Real process-level progress
 requires a model-side signal from Claude's implementation.
+Each upload run retains its submitted `File`; later file selection affects only
+the next upload. Old polls and upload requests are aborted and run-ID-guarded.
+Browser video metadata, when finite and positive, supplies the real timeline
+duration; otherwise views retain their prior safe prediction-based fallback.
+
+## EDA and offline constraints
+
+`python -m eda.summary` without a video reports `real data required`. With an
+authorized video it decodes observed metadata; optional sanitized predictions
+and measured track sidecars add event counts, trajectories and per-bin unique
+track counts. Outputs are labelled provenance-unverified until the team checks
+the source. See `eda/README.md`; no real charts or measurements are bundled.
+
+Cache npm/Python dependencies and model weights **before** running on an
+offline evaluation machine. This repo does not require paid APIs, but a fresh
+`npm ci`, Python package install, or `weights/download.sh` needs network access.
+Verify an offline run separately using the repository's offline check once the
+ML side and authorized video are ready. Do not publish model scores until the
+official evaluator has been run against appropriate ground truth.
 
 ## Evidence still required
 

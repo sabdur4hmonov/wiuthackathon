@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { AnnotatedPlayer } from "./components/AnnotatedPlayer.tsx";
 import { EventTimeline } from "./components/EventTimeline.tsx";
 import { RiskCurve } from "./components/RiskCurve.tsx";
 import illustrativeJson from "./fixtures/illustrative_predictions.json";
-import { createJob, getJob, getJobResult, type JobView } from "./lib/api.ts";
+import { createJob, getJob, getJobResult } from "./lib/api.ts";
 import {
   parsePredictions,
   type ParsedPredictions,
@@ -11,6 +11,8 @@ import {
   type VideoPrediction,
 } from "./lib/predictions.ts";
 import { buildTimeline } from "./lib/timeline.ts";
+import { initialUploadState, uploadReducer } from "./lib/uploadSession.ts";
+import { fetchSampleCatalog, fetchValidatedSample, type SampleEntry } from "./lib/sampleResults.ts";
 
 const fixtureSource: PredictionSource = {
   kind: "fixture",
@@ -31,14 +33,19 @@ const navigation = [
   ["results", "Results"],
   ["demo", "Live demo"],
   ["report", "Report"],
+  ["links", "Links"],
 ] as const;
 
 function PredictionReview({
   bundle,
   videoUrl,
+  durationSec,
+  onDurationChange,
 }: {
   bundle: ParsedPredictions;
   videoUrl?: string;
+  durationSec?: number;
+  onDurationChange?: (seconds: number) => void;
 }) {
   const filenames = Object.keys(bundle.document.videos);
   const [filename, setFilename] = useState(filenames[0] ?? "");
@@ -55,13 +62,14 @@ function PredictionReview({
   }
 
   if (!prediction) return <div className="empty-state">No videos in this prediction file.</div>;
-  const timeline = buildTimeline(prediction.events, prediction.risk);
+  const timeline = buildTimeline(prediction.events, prediction.risk, durationSec);
   return (
     <div className="review-stack">
       <div className="review-toolbar">
         <div>
           <span className="eyebrow">Prediction document</span>
           <strong>{bundle.document.team ?? "Unnamed team"}</strong>
+          {durationSec !== undefined && <span className="small-note">Video duration: {durationSec.toFixed(2)} s</span>}
         </div>
         {filenames.length > 1 ? (
           <label>
@@ -83,11 +91,12 @@ function PredictionReview({
           seekToSec={seekToSec}
           seekToken={seekToken}
           onTimeChange={setCurrentTime}
+          onDurationChange={onDurationChange}
         />
         <EventTimeline
           prediction={prediction}
           source={bundle.source}
-          durationHint={timeline.durationSec}
+          durationHint={durationSec}
           currentTime={currentTime}
           onSeek={seek}
         />
@@ -106,54 +115,147 @@ function PredictionReview({
   );
 }
 
-export function App() {
-  const [file, setFile] = useState<File | null>(null);
-  const [job, setJob] = useState<JobView | null>(null);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const [uploadBusy, setUploadBusy] = useState(false);
-  const [uploadResult, setUploadResult] = useState<ParsedPredictions | null>(null);
-  const previewUrl = useMemo(() => (file ? URL.createObjectURL(file) : undefined), [file]);
+function useObjectUrl(file: File | null): string | undefined {
+  const [preview, setPreview] = useState<{ file: File; url: string } | null>(null);
+  useEffect(() => {
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    setPreview({ file, url });
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+  return preview?.file === file ? preview.url : undefined;
+}
 
-  useEffect(() => () => {
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-  }, [previewUrl]);
+function isAbort(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+function SampleReview({ entry, bundle }: { entry: SampleEntry; bundle: ParsedPredictions }) {
+  const [durationSec, setDurationSec] = useState<number | undefined>();
+  return <PredictionReview
+    bundle={bundle}
+    videoUrl={entry.videoUrl}
+    durationSec={durationSec}
+    onDurationChange={setDurationSec}
+  />;
+}
+
+export function App() {
+  const [uploads, dispatch] = useReducer(uploadReducer, initialUploadState);
+  const nextRunId = useRef(0);
+  const uploadController = useRef<AbortController | null>(null);
+  const run = uploads.run;
+  const previewUrl = useObjectUrl(run?.file ?? null);
+  const [sampleCatalog, setSampleCatalog] = useState<SampleEntry[]>([]);
+  const [sample, setSample] = useState<{ entry: SampleEntry; bundle: ParsedPredictions } | null>(null);
+  const [sampleBusy, setSampleBusy] = useState(false);
+  const [sampleError, setSampleError] = useState<string | null>(null);
+  const sampleController = useRef<AbortController | null>(null);
+
+  useEffect(() => () => uploadController.current?.abort(), []);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchSampleCatalog(controller.signal)
+      .then(setSampleCatalog)
+      .catch((error: unknown) => {
+        if (!isAbort(error)) setSampleError("Validated sample catalog could not be loaded.");
+      });
+    return () => controller.abort();
+  }, []);
+  useEffect(() => () => sampleController.current?.abort(), []);
+
+  async function openSample(entry: SampleEntry) {
+    sampleController.current?.abort();
+    const controller = new AbortController();
+    sampleController.current = controller;
+    setSampleBusy(true);
+    setSampleError(null);
+    setSample(null);
+    try {
+      const bundle = await fetchValidatedSample(entry, controller.signal);
+      if (!controller.signal.aborted) setSample({ entry, bundle });
+    } catch (error) {
+      if (!isAbort(error)) setSampleError(error instanceof Error ? error.message : "Sample could not be loaded.");
+    } finally {
+      if (sampleController.current === controller) {
+        sampleController.current = null;
+        setSampleBusy(false);
+      }
+    }
+  }
 
   useEffect(() => {
-    if (!job || !["queued", "running"].includes(job.status)) return;
-    const timer = window.setInterval(() => {
-      getJob(job.job_id)
-        .then(async (nextJob) => {
-          setJob(nextJob);
-          setUploadError(null);
-          if (nextJob.status === "completed") {
-            const raw = await getJobResult(nextJob.job_id);
-            const parsed = parsePredictions(raw, {
-              kind: "upload",
-              label: `Model output for ${nextJob.filename}`,
-            });
-            if (!parsed.ok) throw new Error(`Invalid model result: ${parsed.errors.join("; ")}`);
-            setUploadResult(parsed.value);
+    const job = run?.job;
+    if (!run || !job || !["queued", "running"].includes(job.status)) return;
+    const runId = run.id;
+    const jobId = job.job_id;
+    const submittedFilename = run.file.name;
+    const controller = new AbortController();
+    let active = true;
+    let timer: number | undefined;
+    let failures = 0;
+    const schedule = () => { timer = window.setTimeout(poll, 1200); };
+    async function poll() {
+      let terminal = false;
+      try {
+        const nextJob = await getJob(jobId, controller.signal);
+        if (!active) return;
+        failures = 0;
+        if (nextJob.job_id !== jobId || nextJob.filename !== submittedFilename) {
+          terminal = true;
+          throw new Error("Demo API returned a mismatched job.");
+        }
+        dispatch({ type: "status", id: runId, job: nextJob });
+        terminal = !["queued", "running"].includes(nextJob.status);
+        if (nextJob.status === "completed") {
+          const raw = await getJobResult(jobId, controller.signal);
+          if (!active) return;
+          const parsed = parsePredictions(raw, {
+            kind: "upload",
+            label: `Live model output for ${submittedFilename}`,
+          });
+          if (!parsed.ok) throw new Error(`Invalid model result: ${parsed.errors.join("; ")}`);
+          if (Object.keys(parsed.value.document.videos).length !== 1 ||
+              !Object.hasOwn(parsed.value.document.videos, submittedFilename)) {
+            throw new Error("Model result did not match the submitted video.");
           }
-        })
-        .catch((error: unknown) => setUploadError(String(error)));
-    }, 1200);
-    return () => window.clearInterval(timer);
-  }, [job]);
+          dispatch({ type: "result", id: runId, jobId, result: parsed.value });
+        } else if (!terminal) {
+          schedule();
+        }
+      } catch (error) {
+        if (!active || isAbort(error)) return;
+        dispatch({ type: "error", id: runId, message: error instanceof Error ? error.message : "Demo API request failed." });
+        if (!terminal && ++failures < 3) schedule();
+      }
+    }
+    schedule();
+    return () => {
+      active = false;
+      controller.abort();
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [run?.id, run?.job?.job_id]);
 
   async function upload() {
-    if (!file) return;
-    setUploadBusy(true);
-    setUploadError(null);
-    setUploadResult(null);
-    setJob(null);
+    const submittedFile = uploads.selectedFile;
+    if (!submittedFile) return;
+    const id = ++nextRunId.current;
+    uploadController.current?.abort();
+    const controller = new AbortController();
+    uploadController.current = controller;
+    dispatch({ type: "start", id, file: submittedFile });
     try {
-      if (!file.name.toLowerCase().endsWith(".mp4")) throw new Error("Select an .mp4 file.");
-      if (file.size > 100 * 1024 * 1024) throw new Error("This foundation demo accepts files up to 100 MiB.");
-      setJob(await createJob(file));
+      if (!submittedFile.name.toLowerCase().endsWith(".mp4")) throw new Error("Select an .mp4 file.");
+      if (submittedFile.size > 100 * 1024 * 1024) throw new Error("This demo accepts files up to 100 MiB.");
+      const job = await createJob(submittedFile, controller.signal);
+      if (controller.signal.aborted) return;
+      dispatch({ type: "created", id, job });
     } catch (error) {
-      setUploadError(error instanceof Error ? error.message : String(error));
+      if (!isAbort(error)) dispatch({ type: "error", id, message: error instanceof Error ? error.message : "Upload failed." });
     } finally {
-      setUploadBusy(false);
+      if (uploadController.current === controller) uploadController.current = null;
+      dispatch({ type: "uploadDone", id });
     }
   }
 
@@ -223,7 +325,16 @@ export function App() {
 
         <section className="section shell" id="results">
           <div className="section-heading"><span className="eyebrow">04 / Results</span><h2>Measured results belong here.</h2><p>Real sample timelines, annotated videos and performance analysis will be published after inference on the organizer clips and manual validation.</p></div>
-          <div className="placeholder-card"><span className="placeholder-icon">◇</span><div><h3>No real sample results yet</h3><p>The repository's current <code>predictions_samples.json</code> is from a generated synthetic clip and is excluded from this results section.</p></div></div>
+          {sampleCatalog.length === 0 ? (
+            <div className="placeholder-card"><span className="placeholder-icon">◇</span><div><h3>No validated real sample results yet</h3><p>The repository's current <code>predictions_samples.json</code> is from a generated synthetic clip and is excluded from this results section.</p></div></div>
+          ) : (
+            <div className="resource-row">
+              {sampleCatalog.map((entry) => <button className="button secondary" key={entry.id} onClick={() => openSample(entry)} disabled={sampleBusy}>{entry.label}</button>)}
+            </div>
+          )}
+          {sampleBusy && <p className="feedback" role="status">Loading validated sample result…</p>}
+          {sampleError && <p className="feedback error" role="alert">{sampleError}</p>}
+          {sample && <SampleReview key={sample.entry.id} entry={sample.entry} bundle={sample.bundle} />}
         </section>
 
         <section className="section shell" id="demo">
@@ -232,24 +343,28 @@ export function App() {
           <PredictionReview bundle={illustrativeFixture} />
 
           <div className="upload-block">
-            <div><span className="eyebrow">Upload foundation</span><h3>Bring your own MP4</h3><p>The local API accepts MP4 uploads up to 100 MiB and 120 declared seconds. Jobs expire after 15 minutes. Model invocation is intentionally disconnected in this phase; accepted jobs report that state plainly.</p></div>
+            <div><span className="eyebrow">Live upload</span><h3>Bring your own MP4</h3><p>The local API accepts MP4 uploads up to 100 MiB and checks declared duration against 120 seconds. When a model is connected, independent decoded-duration verification runs before inference. Jobs expire after 15 minutes. The model remains disconnected for now.</p></div>
             <div className="upload-controls">
               <label className="file-label">
-                <span>{file?.name ?? "Choose an .mp4 file"}</span>
+                <span>{uploads.selectedFile?.name ?? "Choose an .mp4 file"}</span>
                 <input type="file" accept="video/mp4,.mp4" onChange={(event) => {
-                  setFile(event.target.files?.[0] ?? null);
-                  setJob(null);
-                  setUploadResult(null);
-                  setUploadError(null);
+                  dispatch({ type: "select", file: event.target.files?.[0] ?? null });
                 }} />
               </label>
-              <button className="button primary" disabled={!file || uploadBusy} onClick={upload}>
-                {uploadBusy ? "Uploading…" : "Create demo job"}
+              <button className="button primary" disabled={!uploads.selectedFile || run?.uploading} onClick={upload}>
+                {run?.uploading ? "Uploading…" : "Create demo job"}
               </button>
             </div>
-            {uploadError && <p className="feedback error" role="alert">{uploadError}</p>}
-            {job && <p className="feedback" role="status"><strong>{job.status.replaceAll("_", " ")}</strong> · {job.message} · Job {job.job_id.slice(0, 8)}</p>}
-            {uploadResult && <PredictionReview bundle={uploadResult} videoUrl={previewUrl} />}
+            {run && <p className="small-note">Submitted video: <strong>{run.file.name}</strong>{uploads.selectedFile !== run.file && " · A different file is selected for the next job."}</p>}
+            {run?.error && <p className="feedback error" role="alert">{run.error}</p>}
+            {run?.job && <p className="feedback" role="status"><strong>{run.job.status.replaceAll("_", " ")}</strong> · {run.job.message} · Job {run.job.job_id.slice(0, 8)}</p>}
+            {run?.result && <PredictionReview
+              key={run.id}
+              bundle={run.result}
+              videoUrl={previewUrl}
+              durationSec={run.durationSec}
+              onDurationChange={(seconds) => dispatch({ type: "duration", id: run.id, seconds })}
+            />}
           </div>
         </section>
 
@@ -260,7 +375,7 @@ export function App() {
             <article><span className="report-marker pending">→</span><h3>Awaiting model data</h3><p>Real event intervals, risk curves, camera EDA, annotated sample videos and measured failure analysis.</p></article>
             <article><span className="report-marker pending">→</span><h3>Next integration</h3><p>Connect the unchanged organizer harness through the demo adapter, then test real uploads and deployment limits.</p></article>
           </div>
-          <div className="resource-row"><a href="https://github.com/sabdur4hmonov/wiuthackathon" target="_blank" rel="noreferrer">Source repository ↗</a><span>Weights and real sample prediction links will be added after verification.</span></div>
+          <div className="resource-row" id="links"><a href="https://github.com/sabdur4hmonov/wiuthackathon" target="_blank" rel="noreferrer">Source repository ↗</a><span>Weights and real sample prediction links will be added after verification.</span></div>
         </section>
       </main>
 

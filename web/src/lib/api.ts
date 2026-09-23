@@ -22,7 +22,7 @@ async function readJson(response: Response): Promise<unknown> {
   return payload;
 }
 
-export async function createJob(file: File): Promise<JobView> {
+export async function createJob(file: File, signal?: AbortSignal): Promise<JobView> {
   const response = await fetch("/api/jobs", {
     method: "POST",
     headers: {
@@ -30,16 +30,17 @@ export async function createJob(file: File): Promise<JobView> {
       "X-File-Name": encodeURIComponent(file.name),
     },
     body: file,
+    signal,
   });
   return (await readJson(response)) as JobView;
 }
 
-export async function getJob(jobId: string): Promise<JobView> {
-  const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`);
+export async function getJob(jobId: string, signal?: AbortSignal): Promise<JobView> {
+  const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, { signal });
   return (await readJson(response)) as JobView;
 }
 
-export async function getJobResult(jobId: string): Promise<unknown> {
-  const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/result`);
+export async function getJobResult(jobId: string, signal?: AbortSignal): Promise<unknown> {
+  const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/result`, { signal });
   return readJson(response);
 }

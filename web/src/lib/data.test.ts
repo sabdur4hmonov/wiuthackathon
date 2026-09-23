@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import { OFFICIAL_CLASSES, parsePredictions, sourceLabel, type PredictionSource } from "./predictions.ts";
 import { buildTimeline } from "./timeline.ts";
 import { prepareRiskSeries, riskAtTime } from "./risk.ts";
+import { initialUploadState, uploadReducer } from "./uploadSession.ts";
+import type { JobView } from "./api.ts";
+import { parseSampleCatalog, parseValidatedSample } from "./sampleResults.ts";
 
 const fixture: PredictionSource = { kind: "fixture", label: "invented test data" };
 const sample: PredictionSource = { kind: "sample", label: "measured clip 1" };
@@ -62,7 +65,7 @@ test("provenance is external to official JSON", () => {
   if (fixtureResult.ok && sampleResult.ok) {
     assert.deepEqual(fixtureResult.value.document, sampleResult.value.document);
     assert.match(sourceLabel(fixtureResult.value.source), /ILLUSTRATIVE/);
-    assert.match(sourceLabel(sampleResult.value.source), /SAMPLE MODEL OUTPUT/);
+    assert.match(sourceLabel(sampleResult.value.source), /VALIDATED REAL SAMPLE/);
   }
 });
 
@@ -82,4 +85,66 @@ test("risk reduction preserves a sharp spike and lookup is causal", () => {
   assert.equal(riskAtTime(input, 91.29), 0);
   assert.equal(riskAtTime(input, 91.3), 1);
   assert.equal(riskAtTime([[5, 0.8]], 4), null);
+});
+
+test("selection cannot replace the video bound to an existing job", () => {
+  const a = new File(["a"], "a.mp4", { type: "video/mp4" });
+  const b = new File(["b"], "b.mp4", { type: "video/mp4" });
+  const jobA: JobView = { job_id: "a", filename: "a.mp4", status: "queued", result_available: false, message: "Queued" };
+  let state = uploadReducer(initialUploadState, { type: "select", file: a });
+  state = uploadReducer(state, { type: "start", id: 1, file: a });
+  state = uploadReducer(state, { type: "created", id: 1, job: jobA });
+  state = uploadReducer(state, { type: "select", file: b });
+  assert.equal(state.selectedFile, b);
+  assert.equal(state.run?.file, a);
+  assert.equal(state.run?.job?.filename, "a.mp4");
+});
+
+test("stale job A status, result and duration cannot replace job B", () => {
+  const a = new File(["a"], "a.mp4");
+  const b = new File(["b"], "b.mp4");
+  const jobA: JobView = { job_id: "a", filename: "a.mp4", status: "completed", result_available: true, message: "Done" };
+  const jobB: JobView = { job_id: "b", filename: "b.mp4", status: "running", result_available: false, message: "Running" };
+  const parsed = parsePredictions({ videos: { "a.mp4": { events: [], risk: [] } } }, { kind: "upload", label: "A" });
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  let state = uploadReducer(initialUploadState, { type: "start", id: 1, file: a });
+  state = uploadReducer(state, { type: "created", id: 1, job: jobA });
+  state = uploadReducer(state, { type: "start", id: 2, file: b });
+  state = uploadReducer(state, { type: "created", id: 2, job: jobB });
+  state = uploadReducer(state, { type: "status", id: 1, job: jobA });
+  state = uploadReducer(state, { type: "result", id: 1, jobId: "a", result: parsed.value });
+  state = uploadReducer(state, { type: "duration", id: 1, seconds: 73 });
+  assert.equal(state.run?.file, b);
+  assert.equal(state.run?.job?.job_id, "b");
+  assert.equal(state.run?.result, null);
+  assert.equal(state.run?.durationSec, undefined);
+});
+
+test("actual media duration scales empty predictions; unavailable duration retains fallback", () => {
+  const file = new File(["video"], "clip.mp4");
+  let state = uploadReducer(initialUploadState, { type: "start", id: 1, file });
+  state = uploadReducer(state, { type: "duration", id: 1, seconds: 72.345 });
+  assert.equal(state.run?.durationSec, 72.345);
+  assert.equal(buildTimeline([], [], state.run?.durationSec).durationSec, 72.345);
+  assert.equal(buildTimeline([[1, 2, "accident"]], [], state.run?.durationSec).durationSec, 72.345);
+  state = uploadReducer(state, { type: "duration", id: 1, seconds: Number.POSITIVE_INFINITY });
+  assert.equal(state.run?.durationSec, 72.345);
+  assert.equal(buildTimeline([], []).durationSec, 1);
+});
+
+test("future real samples require a strict catalog and sanitized prediction document", () => {
+  const [entry] = parseSampleCatalog({ samples: [{
+    id: "road-01", label: "Verified road clip", filename: "road.mp4",
+    predictionUrl: "/samples/road.json", videoUrl: "/samples/road.mp4",
+  }] });
+  const result = parseValidatedSample({ team: "wiut-cv", videos: { "road.mp4": {
+    events: [[1.234, 2.345, "accident"]], risk: [[0.0001, 0.25]],
+  } } }, entry);
+  assert.equal(result.source.kind, "sample");
+  assert.equal(result.document.videos["road.mp4"].events[0][0], 1.234);
+  assert.throws(() => parseSampleCatalog({ samples: [{ ...entry, predictionUrl: "/samples/../private.json" }] }));
+  assert.throws(() => parseValidatedSample({ videos: { "road.mp4": { events: [] } }, log: { path: "C:/private" } }, entry));
+  assert.throws(() => parseValidatedSample({ videos: { "other.mp4": { events: [] } } }, entry));
+  assert.throws(() => parseValidatedSample({ videos: { "road.mp4": { events: [], risk: [[0, 2]] } } }, entry));
 });

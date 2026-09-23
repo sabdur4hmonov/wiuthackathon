@@ -34,3 +34,10 @@ existing sanitized frontend contract. Harness-reported errors fail the job
 instead of being displayed as genuine no-event results. A process killed on
 timeout may still leave child processes it created; this localhost/demo boundary is not a
 public-deployment security guarantee. See [integration notes](../INTEGRATION.md).
+
+For a future authorized website sample, `python -m demo_api.sample_export
+--pred <raw-harness.json> --video <exact-file.mp4> --out <new-file.json>`
+uses the same harness-result sanitizer without running the model. It fails on
+harness errors or invalid predictions, removes `log`, and will not overwrite an
+existing output. The operator must separately verify that the video is real,
+authorized, and publishable before adding it to the website catalog.

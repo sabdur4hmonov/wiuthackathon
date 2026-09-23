@@ -35,6 +35,27 @@ def _reject_constant(_value: str):
     raise HarnessAdapterError("Model returned invalid prediction data.")
 
 
+def sanitized_harness_result(raw: object, source_filename: str, display_filename: str) -> dict:
+    """Accept one error-free harness result; never forward diagnostics."""
+    if not safe_filename(source_filename) or not safe_filename(display_filename):
+        raise HarnessAdapterError("Model returned invalid prediction data.")
+    if not isinstance(raw, dict) or "log" not in raw or set(raw) - {"team", "videos", "log"}:
+        raise HarnessAdapterError("Model returned invalid prediction data.")
+    if not isinstance(raw["log"], dict) or set(raw["log"]) != {source_filename}:
+        raise HarnessAdapterError("Model returned invalid prediction data.")
+    videos = raw.get("videos")
+    if not isinstance(videos, dict) or set(videos) != {source_filename}:
+        raise HarnessAdapterError("Model returned invalid prediction data.")
+    log_entry = raw["log"][source_filename]
+    if not isinstance(log_entry, dict) or log_entry.get("errors") != []:
+        # The runner can turn exceptions and overruns into empty results.
+        raise HarnessAdapterError("Model processing failed.")
+    candidate = {"videos": {display_filename: videos[source_filename]}}
+    if "team" in raw:
+        candidate["team"] = raw["team"]
+    return sanitized_prediction(candidate, display_filename)
+
+
 class HarnessAdapter:
     def __init__(
         self,
@@ -82,24 +103,7 @@ class HarnessAdapter:
                 object_pairs_hook=_unique_safe_object,
                 parse_constant=_reject_constant,
             )
-            if not isinstance(raw, dict) or set(raw) - {"team", "videos", "log"}:
-                raise HarnessAdapterError("Model returned invalid prediction data.")
-            if "log" in raw and not isinstance(raw["log"], dict):
-                raise HarnessAdapterError("Model returned invalid prediction data.")
-            videos = raw.get("videos")
-            if not isinstance(videos, dict) or set(videos) != {video_path.name}:
-                raise HarnessAdapterError("Model returned invalid prediction data.")
-            if "log" in raw:
-                log_entry = raw["log"].get(video_path.name)
-                if not isinstance(log_entry, dict) or log_entry.get("errors") != []:
-                    # The organizer runner can turn model exceptions and time
-                    # overruns into empty predictions. Do not present those as
-                    # a genuine no-event inference in the demo.
-                    raise HarnessAdapterError("Model processing failed.")
-            candidate = {"videos": {filename: videos[video_path.name]}}
-            if "team" in raw:
-                candidate["team"] = raw["team"]
-            return sanitized_prediction(candidate, filename)
+            return sanitized_harness_result(raw, video_path.name, filename)
         except Exception as error:
             # subprocess, JSON, and filesystem exceptions can contain paths.
             raise HarnessAdapterError("Model processing failed or returned invalid predictions.") from error

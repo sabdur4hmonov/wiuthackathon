@@ -183,8 +183,8 @@ export function parsePredictions(
 
 export function sourceLabel(source: PredictionSource): string {
   if (source.kind === "fixture") return `ILLUSTRATIVE FIXTURE · ${source.label}`;
-  if (source.kind === "sample") return `SAMPLE MODEL OUTPUT · ${source.label}`;
-  return `UPLOADED VIDEO OUTPUT · ${source.label}`;
+  if (source.kind === "sample") return `VALIDATED REAL SAMPLE · ${source.label}`;
+  return `LIVE UPLOAD INFERENCE · ${source.label}`;
 }
 
 export function isRealModelOutput(source: PredictionSource): boolean {

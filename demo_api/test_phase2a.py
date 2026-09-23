@@ -145,6 +145,8 @@ class HarnessTests(unittest.TestCase):
         ]
         for document in cases:
             with self.subTest(document=document):
+                if "log" not in document:
+                    document = {**document, "log": {"upload.mp4": {"errors": []}}}
                 self.write_harness(document)
                 with self.assertRaises(HarnessAdapterError):
                     self.adapter().predict(self.video, "road.mp4")
@@ -175,7 +177,7 @@ class HarnessTests(unittest.TestCase):
         self.assertNotIn(str(self.root), str(caught.exception))
 
     def test_no_shell_invocation(self):
-        self.write_harness({"videos": {"upload.mp4": {"events": []}}})
+        self.write_harness({"videos": {"upload.mp4": {"events": []}}, "log": {"upload.mp4": {"errors": []}}})
         original_run = subprocess.run
         calls = []
 
