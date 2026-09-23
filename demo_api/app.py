@@ -6,6 +6,7 @@ import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlsplit
 
+from .duration import DecodedDurationVerifier
 from .jobs import (
     MAX_BYTES,
     SOCKET_TIMEOUT_SEC,
@@ -13,6 +14,7 @@ from .jobs import (
     JobStore,
     UploadError,
     UploadTimeout,
+    PredictionAdapter,
 )
 
 
@@ -100,8 +102,16 @@ def make_handler(store: JobStore):
     return Handler
 
 
+def build_store(adapter: PredictionAdapter | None = None) -> JobStore:
+    """Keep normal startup disconnected; pair every future adapter with decode verification."""
+    return JobStore(
+        adapter=adapter,
+        duration_verifier=DecodedDurationVerifier() if adapter is not None else None,
+    )
+
+
 def main():
-    store = JobStore()
+    store = build_store()
     server = ThreadingHTTPServer(("127.0.0.1", 8765), make_handler(store))
     print("WIUT demo API at http://127.0.0.1:8765 (model adapter disconnected)")
     try:

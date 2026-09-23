@@ -65,17 +65,31 @@ The API accepts a `PredictionAdapter` implementation whose
 prediction document. Connecting one also **requires** an independent
 `DurationVerifier.duration_seconds(video_path)` that verifies actual duration
 from decoded frames. `JobStore(adapter=..., duration_verifier=...)` refuses to
-start otherwise. The verifier runs before the adapter, so header metadata
-alone cannot authorize model execution. No decoded-frame verifier is shipped
-in this phase: adding one correctly depends on the eventual video runtime.
+start otherwise. `build_store(adapter)` supplies `DecodedDurationVerifier`
+automatically; normal `python -m demo_api.app` still calls `build_store()`
+without an adapter. The verifier uses the repository's OpenCV dependency to
+decode every frame to EOF in a killable subprocess (45-second deadline),
+cross-checks decoded frame count and advancing presentation timestamps, and
+fails closed on missing/inconsistent data or duration over 120 seconds. This
+does not rely on MP4 movie duration alone. Unusual codecs whose timestamps
+OpenCV cannot verify will be rejected, and an attacker able to forge both
+decoded timestamps and frame rate may still defeat time inference; this is a
+localhost/demo guard, not a media-forensics guarantee.
 
-A future adapter should invoke the *unchanged* organizer runner and parse its
-output, maintaining the harness's timing and output semantics. Do not call
-separate ad-hoc model methods in the website. Before a job can complete,
+A `HarnessAdapter` now implements that seam but is intentionally **not
+injected** into normal startup: real model connection awaits real footage,
+authored zones, installed dependencies/weights, and an explicit integration
+decision. When injected, it invokes the *unchanged* organizer runner in a
+separate process with a 390-second timeout, fixed argument list and no shell.
+It suppresses subprocess output, rejects malformed/duplicate/unsafe JSON
+keys, and treats harness-reported errors as failed jobs. It strips the runner's
+`log`, maps the private upload filename to the visitor's filename, and validates
+the final result. Do not call separate
+ad-hoc model methods in the website. Before a job can complete,
 `demo_api/validation.py` checks the complete event/risk contract and allows
 only `team` and the single uploaded video. Extra fields, including harness
-`log`, are **rejected**, not returned. The adapter must extract only the
-prediction fields, never forward diagnostic logs or paths. The frontend API
+`log`, are **rejected**, not returned. The adapter extracts only prediction
+fields; no diagnostic log or local path reaches the frontend. The frontend API
 and visualizations need no rewrite.
 
 Optional tracking boxes are a **separate** sidecar, never fields added to
@@ -95,11 +109,14 @@ uploads in 64 KiB chunks with a 10-second socket timeout and 60-second total
 upload deadline. At most two uploads/model jobs are active and 32 job records
 are retained. A janitor expires jobs after 15 minutes; uploaded files are
 removed on completion/failure or expiry (with retry for transient file locks).
-Results and statuses are held in memory only. The server cannot forcibly stop
-a hung future adapter thread; that adapter must enforce its own execution
-deadline. API responses contain neither storage paths nor model exceptions.
-The service binds to localhost and must not be exposed directly to the public
-Internet in its current form.
+Results and statuses are held in memory only. The optional harness adapter
+has a killable process deadline, so a hung model process does not hang its
+API worker indefinitely. The generic adapter protocol does not make arbitrary
+third-party adapters killable; use the subprocess adapter when connecting a
+model. Child processes spawned by the harness may need additional process-tree
+isolation for a public deployment. API responses contain neither storage paths
+nor model exceptions. The service binds to localhost and must not be exposed
+directly to the public Internet in its current form.
 
 The UI currently shows upload activity and queued/running/completed/failed or
 awaiting-model state, not a fabricated percentage. Real process-level progress

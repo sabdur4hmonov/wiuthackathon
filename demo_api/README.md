@@ -18,6 +18,19 @@ sanitized before completion: only official events/risk for the uploaded video
 are returned, never the harness log or local paths. The service streams at
 most 100 MiB in 64 KiB chunks, limits active uploads/jobs to two, expires
 records after 15 minutes, and cleans files after completion/failure/expiry.
-The disconnected demo checks declared MP4 duration, **not** actual decoded
-duration. This localhost foundation is not production hardened; see
-[integration notes](../INTEGRATION.md).
+The normal server startup remains disconnected. It checks declared MP4
+duration for upload acceptance, but does not run a decoder or model on an
+accepted upload. `build_store(adapter)` automatically pairs a future adapter
+with `DecodedDurationVerifier`: OpenCV decodes frames to EOF in a separate
+process, checks advancing presentation timestamps and decoded frame count,
+enforces 120 seconds, and fails closed if verification cannot complete within
+45 seconds. Container movie duration alone cannot authorize inference.
+
+`HarnessAdapter` is available but not enabled by default. If explicitly
+injected later, it runs the unchanged `run_submission.py` with fixed arguments,
+no shell, and a 390-second timeout. It discards the harness `log`, rejects
+duplicate/unsafe JSON keys and malformed predictions, and returns only the
+existing sanitized frontend contract. Harness-reported errors fail the job
+instead of being displayed as genuine no-event results. A process killed on
+timeout may still leave child processes it created; this localhost/demo boundary is not a
+public-deployment security guarantee. See [integration notes](../INTEGRATION.md).
