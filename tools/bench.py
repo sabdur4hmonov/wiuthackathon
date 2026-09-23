@@ -35,11 +35,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.budget import probe_duration  # noqa: E402
 
 
-def _decode_once(video: Path) -> tuple[float, int]:
+def _decode_once(video: Path, max_frames: int | None = None) -> tuple[float, int]:
     cap = cv2.VideoCapture(str(video))
     n = 0
     t0 = time.perf_counter()
-    while True:
+    while max_frames is None or n < max_frames:
         ok, _frame = cap.read()
         if not ok:
             break
@@ -49,22 +49,52 @@ def _decode_once(video: Path) -> tuple[float, int]:
     return el, n
 
 
-def bench_decode(video: Path, duration: float, repeats: int = 3) -> dict:
+def bench_decode(video: Path, duration: float, repeats: int = 3,
+                 max_frames: int | None = None,
+                 n_frames_total: int | None = None) -> dict:
     """Pure decode: read every frame, touch nothing.
 
     Repeated and reported as a MEDIAN. A single decode pass varies by ~20% run
     to run on a loaded desktop, which is larger than most of the differences we
     care about -- and much larger than step()'s own cost, so measuring that by
     subtracting two decode runs would report noise as signal.
+
+    max_frames bounds each pass to a SAMPLE of the clip rather than a full
+    decode, and n_frames_total (the clip's real frame count, from
+    probe_duration) is then used to extrapolate. Built for very large/slow
+    clips -- 4K 10-bit camera footage can take many minutes for one full
+    pass, and an exploratory measurement needs an answer in seconds.
+
+    "sec"/"x_realtime"/"ms_per_frame" ALWAYS describe the full clip, sampled
+    or not -- extrapolated from the measured per-frame rate when sampled.
+    Callers that combine this with other per-clip costs (e.g. Part B's total)
+    therefore never need to special-case the sampled path.
+    "sec_sampled"/"frames_sampled" expose the raw, un-extrapolated
+    measurement for transparency.
     """
-    runs = [_decode_once(video) for _ in range(max(1, repeats))]
+    runs = [_decode_once(video, max_frames) for _ in range(max(1, repeats))]
     times = sorted(r[0] for r in runs)
     n = runs[0][1]
     med = times[len(times) // 2]
-    return {"frames": n, "sec": med, "sec_min": times[0], "sec_max": times[-1],
-            "runs": len(times),
-            "x_realtime": med / duration if duration else None,
-            "ms_per_frame": 1000.0 * med / n if n else None}
+    # Sampled only if the cap was actually hit -- reading fewer frames than
+    # max_frames means we found EOF first, i.e. this WAS a full pass.
+    sampled = max_frames is not None and n >= max_frames
+    if sampled:
+        total = n_frames_total if n_frames_total is not None else n
+        sec_per_frame = med / n if n else 0.0
+        full_sec = sec_per_frame * total
+        frames_reported = total
+    else:
+        full_sec = med
+        frames_reported = n
+    return {"frames": frames_reported, "sec": full_sec,
+            "sec_min": times[0], "sec_max": times[-1], "runs": len(times),
+            "sampled": sampled,
+            "frames_sampled": n if sampled else None,
+            "sec_sampled": med if sampled else None,
+            "x_realtime": full_sec / duration if duration else None,
+            "ms_per_frame": 1000.0 * full_sec / frames_reported
+                            if frames_reported else None}
 
 
 def bench_step(video: Path, n_calls: int = 100_000) -> dict:
@@ -123,6 +153,10 @@ def main() -> int:
     ap.add_argument("--skip-part-a", action="store_true")
     ap.add_argument("--decode-repeats", type=int, default=3,
                     help="decode passes to median over (default 3)")
+    ap.add_argument("--max-frames", type=int, default=None,
+                    help="sample only this many frames per decode pass and "
+                         "extrapolate, instead of a full-file decode. For "
+                         "clips where a full pass takes many minutes.")
     ap.add_argument("--use-cache", action="store_true",
                     help="measure the cached path instead of a cold run")
     ap.add_argument("--json", type=Path)
@@ -142,10 +176,18 @@ def main() -> int:
     rep: dict = {"video": args.video.name, "duration_sec": duration, "fps": fps,
                  "n_frames": n_frames, "budget_sec": budget}
 
-    print(f"[1/3] pure decode floor, median of {args.decode_repeats} runs "
+    sample_note = (f", sampling {args.max_frames} frames/pass"
+                  if args.max_frames else "")
+    print(f"[1/3] pure decode floor, median of {args.decode_repeats} runs"
+          f"{sample_note} "
           f"(Part B can never beat this) ...")
-    rep["decode_floor"] = bench_decode(args.video, duration, args.decode_repeats)
+    rep["decode_floor"] = bench_decode(args.video, duration, args.decode_repeats,
+                                       max_frames=args.max_frames,
+                                       n_frames_total=n_frames)
     d = rep["decode_floor"]
+    if d["sampled"]:
+        print(f"      SAMPLED {d['frames_sampled']} of {n_frames} real frames "
+              f"in {d['sec_sampled']:.2f}s, extrapolated to the full clip:")
     print(f"      {d['sec']:.2f}s  =  {d['x_realtime']:.3f}x realtime  "
           f"({d['ms_per_frame']:.2f} ms/frame over {d['frames']} frames)")
     print(f"      spread across runs: {d['sec_min']:.2f}s .. {d['sec_max']:.2f}s\n")

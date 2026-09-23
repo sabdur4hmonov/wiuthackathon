@@ -13,7 +13,7 @@ import traceback
 from pathlib import Path
 
 from . import cache as cache_mod
-from .budget import Budget
+from .budget import Budget, measure_part_b_floor
 from .config import CFG, enforce_offline, perception_config_hash, seed_everything
 from .postprocess import finalise
 from .rules import run_rules
@@ -34,6 +34,8 @@ def detect_events(video_path: str, verbose: bool = True,
         print(f"[pipeline] cannot probe {video_path}: {e}", file=sys.stderr)
         return []
 
+    _calibrate_part_b_reserve(video_path, budget, verbose=verbose)
+
     try:
         tracks = _get_tracks(video_path, budget, use_cache=use_cache, verbose=verbose)
         zones = _get_zones(tracks, verbose=verbose)
@@ -50,6 +52,57 @@ def detect_events(video_path: str, verbose: bool = True,
     if verbose:
         print(budget.format_report(), file=sys.stderr)
     return events
+
+
+def _calibrate_part_b_reserve(video_path: str, budget: Budget,
+                              verbose: bool) -> None:
+    """Replace the fixed part_b_reserve guess with a measurement from THIS file.
+
+    Must run before anything else touches part_a_hard (which derives from
+    part_b_reserve): a fixed 1.2x multiplier was tuned against synthetic 1080p8
+    clips, and the real camera footage turned out to be XAVC H.264 High 4:2:2,
+    10-bit 4K -- far more expensive per frame to decode. Guessing wrong in
+    either direction is bad: too low starves Part A's hard stop of the margin
+    Part B actually needs (risking an overrun that zeroes BOTH parts), too high
+    starves Part A of time it could safely have used.
+
+    Wrapped in try/except and bounded in cost by measure_part_b_floor itself
+    (see BudgetConfig.part_b_probe_frames/part_b_probe_max_sec): a probe
+    failure must never be fatal, and this must never be allowed to eat a
+    meaningful slice of the budget it exists to protect.
+    """
+    cfg = CFG.budget
+    # Bounded the same way safety_margin is: a flat cap protects the probe
+    # from running long on a huge clip, a fractional cap protects a tiny
+    # clip's already-thin budget from the probe's own fixed overhead.
+    max_probe_sec = min(cfg.part_b_probe_max_sec,
+                        cfg.part_b_probe_max_frac * budget.total_budget)
+    try:
+        with budget.stage("part_b_probe"):
+            estimate, probe_wall = measure_part_b_floor(
+                video_path, budget.n_frames,
+                n_probe=cfg.part_b_probe_frames,
+                max_probe_sec=max_probe_sec,
+            )
+        if estimate is not None:
+            budget.set_measured_part_b(estimate)
+            budget.note("part_b_probe", 0.0,
+                       f"measured {estimate:.1f}s for Part B "
+                       f"({probe_wall * 1000:.0f}ms probe -> "
+                       f"{estimate / max(budget.duration, 1e-9):.3f}x realtime)")
+            if verbose:
+                print(f"[budget] Part B reserve calibrated from a real probe: "
+                      f"{estimate:.1f}s (was {cfg.part_b_reserve}x fixed "
+                      f"guess = {cfg.part_b_reserve * budget.duration:.1f}s)",
+                      file=sys.stderr)
+        elif verbose:
+            print("[budget] Part B probe read 0 frames; keeping the fixed "
+                  f"{cfg.part_b_reserve}x reserve", file=sys.stderr)
+    except Exception as e:
+        # Never let this calibration step cost the video its prediction.
+        if verbose:
+            print(f"[budget] Part B probe failed, keeping the fixed "
+                  f"{cfg.part_b_reserve}x reserve: {e!r}", file=sys.stderr)
 
 
 def _get_tracks(video_path: str, budget: Budget, use_cache: bool,

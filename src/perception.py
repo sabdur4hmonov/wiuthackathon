@@ -41,6 +41,7 @@ import numpy as np
 
 from .budget import Budget
 from .config import CFG, WEIGHTS_DIR, PerceptionConfig, enforce_offline, seed_everything
+from .ffdecode import FFmpegFrameReader, FFmpegUnavailable, scaled_size
 from .tracks import COL, COLUMNS, TrackTable, compute_kinematics, make_row
 
 _MODEL = None
@@ -186,12 +187,61 @@ def run_perception(video_path: str | Path,
         return table
 
     device = device_string()
-    cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
-        budget.note("perception", 0.0, "cannot open video")
-        return table
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    # -- decoder selection ---------------------------------------------------
+    # "cv2" (default, KEEP THIS -- see PerceptionConfig.decoder in
+    # src/config.py) reproduces CP0 exactly: ONE VideoCapture, opened once,
+    # used for both metadata and the grab()/retrieve() loop. "ffmpeg" pipes
+    # through src.ffdecode instead, scaling to cfg.decode_width -- it needs
+    # native width/height FIRST (to compute the scaled target size), so only
+    # that path pays for a throwaway metadata-only capture. Do not restructure
+    # this to open a capture unconditionally "for symmetry": a small clip's
+    # entire time budget can be under 2 s (see BudgetConfig.part_b_probe_*),
+    # and a second VideoCapture open/close was measured to be enough overhead,
+    # stacked on a cold model load, to blow that budget on the harness
+    # contract tests -- this is why that extra open existed only briefly and
+    # was removed.
+    #
+    # width/height below become the TrackTable coordinate frame -- the SCALED
+    # size when using ffmpeg, never the native 4K size. Every zones.json
+    # lookup and every rule reasons in that frame, through Zones own
+    # rescaling (authored_against vs the video actual size), so this must be
+    # the size frames were actually decoded at, not the source file size.
+    ff_reader = None
+    decoder_used = "cv2"
+    cap = None
+
+    if cfg.decoder == "ffmpeg":
+        try:
+            probe = cv2.VideoCapture(str(video_path))
+            if not probe.isOpened():
+                budget.note("perception", 0.0, "cannot open video")
+                return table
+            native_width = int(probe.get(cv2.CAP_PROP_FRAME_WIDTH))
+            native_height = int(probe.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            probe.release()
+            width, height = scaled_size(native_width, native_height,
+                                        cfg.decode_width)
+            reader = FFmpegFrameReader(video_path, width, height)
+            reader.__enter__()
+            ff_reader = reader
+            decoder_used = "ffmpeg"
+        except Exception as e:
+            # A missing binary or a pipe that fails to start must never break
+            # the run: fall back to the cv2 path exactly as CP0 always has.
+            if verbose:
+                print(f"[perception] ffmpeg decoder unavailable, falling back "
+                      f"to cv2: {e!r}", file=sys.stderr)
+            ff_reader = None
+            decoder_used = "cv2"
+
+    if ff_reader is None:
+        cap = cv2.VideoCapture(str(video_path))
+        if not cap.isOpened():
+            budget.note("perception", 0.0, "cannot open video")
+            return table
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     track_kwargs = build_track_kwargs(cfg, device)
 
@@ -206,34 +256,59 @@ def run_perception(video_path: str | Path,
     loop_t0 = t_start
     expected = max(1, budget.n_frames // stride)
 
-    try:
-        while True:
-            # grab() advances without the colour convert + copy that read()
-            # does, so skipped frames cost only the decode we cannot avoid.
-            if not cap.grab():
-                break
-            if idx % stride == 0:
-                ok, frame = cap.retrieve()
-                if not ok:
-                    break
-                t_sec = idx / budget.fps if budget.fps else 0.0
-                res = model.track(frame, **track_kwargs)
-                rows.extend(_rows_from_result(res, idx, t_sec))
-                last_t = t_sec
-                processed += 1
+    def _should_stop_after(processed_count):
+        """Shared budget check, invoked identically from either decode path."""
+        if processed_count % _BUDGET_CHECK_EVERY != 0:
+            return False
+        if budget.should_stop():
+            return True
+        if budget.project_overrun(processed_count, expected, loop_t0):
+            budget.force_stop(
+                f"projected overrun: {processed_count}/{expected} frames in "
+                f"{budget.elapsed():.1f}s, limit {budget.part_a_hard:.1f}s"
+            )
+            return True
+        return False
 
-                if processed % _BUDGET_CHECK_EVERY == 0:
-                    if budget.should_stop():
+    try:
+        if ff_reader is not None:
+            # Every source frame arrives already scaled; unlike cv2 grab-only
+            # skip, a frame we do not process still cost a decode+scale+pipe
+            # write, since ffmpeg cannot cheaply skip that work mid-pipe the
+            # way cv2 two-call grab/retrieve can.
+            for idx, frame in ff_reader.frames():
+                if idx % stride == 0:
+                    t_sec = idx / budget.fps if budget.fps else 0.0
+                    res = model.track(frame, **track_kwargs)
+                    rows.extend(_rows_from_result(res, idx, t_sec))
+                    last_t = t_sec
+                    processed += 1
+                    if _should_stop_after(processed):
                         break
-                    if budget.project_overrun(processed, expected, loop_t0):
-                        budget.force_stop(
-                            f"projected overrun: {processed}/{expected} frames in "
-                            f"{budget.elapsed():.1f}s, limit {budget.part_a_hard:.1f}s"
-                        )
+        else:
+            while True:
+                # grab() advances without the colour convert + copy that
+                # read() does, so skipped frames cost only the decode we
+                # cannot avoid.
+                if not cap.grab():
+                    break
+                if idx % stride == 0:
+                    ok, frame = cap.retrieve()
+                    if not ok:
                         break
-            idx += 1
+                    t_sec = idx / budget.fps if budget.fps else 0.0
+                    res = model.track(frame, **track_kwargs)
+                    rows.extend(_rows_from_result(res, idx, t_sec))
+                    last_t = t_sec
+                    processed += 1
+                    if _should_stop_after(processed):
+                        break
+                idx += 1
     finally:
-        cap.release()
+        if cap is not None:
+            cap.release()
+        if ff_reader is not None:
+            ff_reader.__exit__(None, None, None)
 
     data = (np.vstack(rows).astype(np.float32) if rows
             else np.zeros((0, len(COLUMNS)), dtype=np.float32))
@@ -249,11 +324,12 @@ def run_perception(video_path: str | Path,
     elapsed = time.perf_counter() - t_start
     budget.note("perception", elapsed,
                 f"{processed} frames, {len(table)} rows, dev={device}, "
+                f"decoder={decoder_used}, "
                 f"{elapsed / budget.duration:.3f}x realtime"
                 if budget.duration else "")
     if verbose:
-        print(f"[perception] {table.summary()} in {elapsed:.1f}s on {device}",
-              file=sys.stderr)
+        print(f"[perception] {table.summary()} in {elapsed:.1f}s on {device} "
+              f"(decoder={decoder_used})", file=sys.stderr)
     return table
 
 

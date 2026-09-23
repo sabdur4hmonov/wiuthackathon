@@ -86,9 +86,51 @@ class BudgetConfig:
     harness_factor: float = 3.0      # run_submission.py TIME_FACTOR_DEFAULT
     part_a_target: float = 1.2       # aim to finish perception+rules by here
     part_a_hard: float = 1.5         # absolute stop for Part A
-    part_b_reserve: float = 1.2      # headroom Part B's full decode pass needs
+    part_b_reserve: float = 1.2      # FALLBACK headroom, used only if the real
+                                      # probe below never runs or fails. On the
+                                      # 4K XAVC test footage this fixed 1.2x is
+                                      # wrong -- see part_b_measured_safety.
     safety_margin_sec: float = 2.0   # covers harness overhead outside our t0
     safety_margin_frac: float = 0.15  # ...but never more than this of the budget
+
+    # -- measured Part B reserve --------------------------------------------
+    # run_submission.py's run_risk (unmodified) calls cv2 VideoCapture.read()
+    # on the ORIGINAL file for every single frame, official stride=1 -- that
+    # decode is entirely outside our control and cannot be sped up by anything
+    # in solution.py. The fixed part_b_reserve multiplier above was a guess
+    # made before any real footage existed. Real footage turned out to be XAVC
+    # H.264 High 4:2:2, 10-bit (yuv422p10le), 3840x2160 -- decoding that is far
+    # more expensive per frame than the synthetic 1080p8 clips CP0 was tuned
+    # against, so a fixed 1.2x is not trustworthy either direction: it could
+    # starve Part A on this footage, or on a lighter clip reserve far more than
+    # Part B will actually need.
+    #
+    # So detect_events probes a handful of REAL frames with the harness's own
+    # decode call (plain cap.read(), not grab/retrieve) before doing anything
+    # else, extrapolates to the full frame count, and Budget.part_b_reserve
+    # uses that measurement instead of the fixed multiplier whenever one is
+    # available (Budget.set_measured_part_b). See src/budget.measure_part_b_floor.
+    part_b_probe_frames: int = 40    # frames to sample for the estimate
+    part_b_probe_max_sec: float = 3.0  # hard cap on the probe's own wall time
+    # ...but never more than this FRACTION of the video's own total budget --
+    # same reasoning as safety_margin_frac: a flat 3.0s cap is fine for the
+    # multi-minute real test clips, but on a very short clip (harness contract
+    # tests use ~1.6s synthetic clips, budget 4.8s) even a fast few-millisecond
+    # probe plus its own VideoCapture open/close overhead is a proportionally
+    # large bite, and stacking that on top of a cold model load can be what
+    # tips an already tight per-frame budget-check granularity over the edge.
+    part_b_probe_max_frac: float = 0.05
+    # CALIBRATION: MEASURED, 2026-09-23, real XAVC 4K clip (sample_001.mp4),
+    # this 8-core machine. A 100-frame probe from frame 0 gave 49.12 ms/frame
+    # (1.472x realtime); a 1500-frame probe from frame 0 gave 59.65 ms/frame
+    # (1.788x realtime) -- ~21% higher. Decode cost is NOT flat across a clip
+    # (GOP structure, reference buffering, scene motion), and the runtime probe
+    # in _calibrate_part_b_reserve only ever samples from frame 0 (cheap: it
+    # has to run inside the real budget), so it is likely to UNDERESTIMATE.
+    # 1.3x, not 1.15x, covers the ~21% intra-clip variance actually observed
+    # plus machine-to-machine slack. Revisit once a full-file decode-floor
+    # confirmation exists (tools/bench.py without --max-frames).
+    part_b_measured_safety: float = 1.30  # headroom over the measured rate
 
 
 # --------------------------------------------------------------------------
@@ -106,6 +148,35 @@ class PerceptionConfig:
     max_det: int = 300
     half: bool = True                # fp16 on CUDA, ignored on CPU
     tracker: str = "bytetrack.yaml"
+    # Frame source for Stage 1. "cv2" (default, KEEP THIS) is cv2.VideoCapture
+    # grab/retrieve, the CP0 path. "ffmpeg" pipes through an ffmpeg subprocess
+    # that scales inside the decoder (src/ffdecode.py), built on the
+    # hypothesis that scaling INSIDE the decoder would beat decoding full
+    # 4K/10-bit and letting the detector resize it away.
+    #
+    # MEASURED, 2026-09-23, on the real XAVC clip (sample_001.mp4), this
+    # 8-core machine, 300 processed frames at stride=2: the hypothesis was
+    # WRONG. cv2 grab/retrieve at native 4K: 81.6 ms/frame. ffmpeg piped and
+    # scaled to 640/960/1280 width: 81.9 / 93.8 / 104.0 ms/frame -- equal at
+    # best, worse at every wider scale. Two reasons: (1) H.264 decode of this
+    # 10-bit 4:2:2 stream dominates the per-frame cost and happens BEFORE any
+    # scale filter runs, so scaling the output does not reduce it; (2) cv2's
+    # grab()-only skip on non-stride frames is genuinely cheap (decode, no
+    # colour-convert/copy), while the ffmpeg pipe must fully decode + scale +
+    # convert + write EVERY frame to keep frame-index accounting correct, so
+    # it pays full cost on frames cv2 gets almost for free.
+    #
+    # Kept available (off by default) rather than deleted: it is fully
+    # opt-in, falls back to cv2 automatically on any failure, and may still
+    # be worth revisiting for a different codec/resolution or with a
+    # `select` filter added to skip full processing on non-stride frames.
+    # DO NOT default this to "ffmpeg" without re-measuring first.
+    decoder: str = "cv2"
+    # Target width for the ffmpeg decoder's own scale filter (height follows
+    # the source aspect ratio, rounded to even). Chosen above `imgsz` so the
+    # detector's own letterboxing/resize still has real pixels to work from,
+    # not upscaled ones. Ignored when decoder == "cv2".
+    decode_width: int = 1280
     # COCO ids we care about. 0 person, 1 bicycle, 2 car, 3 motorcycle,
     # 5 bus, 7 truck. Everything else is noise on a road camera.
     classes: tuple[int, ...] = (0, 1, 2, 3, 5, 7)

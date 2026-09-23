@@ -15,5 +15,13 @@ ultralytics>=8.3.0
 # left optional so the eval box can use it if it builds.
 scipy>=1.11
 
+# OPTIONAL faster decode path for Part A on some footage (src/ffdecode.py),
+# OFF by default (PerceptionConfig.decoder = "cv2") -- measured SLOWER than
+# cv2 on the real XAVC 4K test clip, see src/config.py. Ships a bundled
+# static ffmpeg binary (no system ffmpeg / internet needed at runtime once
+# installed), so importing src/perception.py does not fail without it, but
+# it is required for the "ffmpeg" decoder option to work at all.
+imageio-ffmpeg>=0.5
+
 # Dev only
 pytest>=8.0

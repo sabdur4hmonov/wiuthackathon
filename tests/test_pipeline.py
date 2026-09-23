@@ -205,3 +205,57 @@ def test_truncated_perception_is_not_cached(clip, isolated_cache, monkeypatch):
     t2 = _get_tracks(str(clip), b2, use_cache=True, verbose=False)
     assert not any("cache HIT" in (s.note or "") for s in b2.stages)
     assert t2.complete is True
+
+
+
+# ---------------------------------------------------------------------------
+# Part B reserve calibration
+# ---------------------------------------------------------------------------
+def test_calibrate_part_b_reserve_sets_a_real_measurement(clip):
+    from src.budget import Budget
+    from src.pipeline import _calibrate_part_b_reserve
+
+    b = Budget.for_video(clip)
+    assert b.report()["part_b_reserve_measured"] is False
+    _calibrate_part_b_reserve(str(clip), b, verbose=False)
+    assert b.report()["part_b_reserve_measured"] is True
+    assert b.part_b_reserve > 0.0
+    assert any(s.name == "part_b_probe" for s in b.stages)
+
+
+def test_calibrate_part_b_reserve_never_raises_on_a_bad_path(tmp_path):
+    from src.budget import Budget
+    from src.pipeline import _calibrate_part_b_reserve
+
+    real_clip_for_duration = tmp_path / "placeholder.mp4"
+    # Budget needs a valid probe_duration source; build one directly instead.
+    b = Budget(duration=10.0, fps=25.0, n_frames=250, t0=__import__("time").perf_counter())
+    missing = tmp_path / "does_not_exist.mp4"
+    _calibrate_part_b_reserve(str(missing), b, verbose=False)     # must not raise
+    # Falls back to the fixed multiplier: no measurement was possible.
+    assert b.report()["part_b_reserve_measured"] is False
+    assert b.part_b_reserve == pytest.approx(b.cfg.part_b_reserve * b.duration)
+
+
+def test_calibrate_part_b_reserve_is_bounded_in_cost(clip):
+    """The probe protects the budget it feeds; it must not itself run long."""
+    import time as time_mod
+
+    from src.budget import Budget
+    from src.pipeline import _calibrate_part_b_reserve
+
+    b = Budget.for_video(clip)
+    t0 = time_mod.perf_counter()
+    _calibrate_part_b_reserve(str(clip), b, verbose=False)
+    assert time_mod.perf_counter() - t0 < b.cfg.part_b_probe_max_sec + 1.0
+
+
+def test_detect_events_calibrates_part_b_before_perception(clip, isolated_cache,
+                                                           capsys):
+    """End to end: the probe runs, and its log line appears before perception."""
+    detect_events(str(clip), verbose=True)
+    err = capsys.readouterr().err
+    assert "Part B reserve calibrated" in err
+    probe_pos = err.index("Part B reserve calibrated")
+    perception_pos = err.index("[perception]") if "[perception]" in err else len(err)
+    assert probe_pos < perception_pos

@@ -196,3 +196,128 @@ def test_probe_duration_raises_on_an_unopenable_file(tmp_path):
     bad.write_bytes(b"nonsense")
     with pytest.raises(RuntimeError, match="cannot open"):
         probe_duration(bad)
+
+
+
+# ---------------------------------------------------------------------------
+# measured Part B reserve
+# ---------------------------------------------------------------------------
+def test_part_b_reserve_defaults_to_the_fixed_multiplier():
+    """No measurement taken yet -> the old CP0 behaviour, unchanged."""
+    b = mk(duration=100.0)
+    assert b.part_b_reserve == pytest.approx(1.2 * 100.0)
+
+
+def test_set_measured_part_b_overrides_the_fixed_multiplier():
+    b = mk(duration=100.0)
+    b.set_measured_part_b(40.0)
+    # 40.0 * the configured safety headroom (default 1.30), not the 1.2x guess.
+    assert b.part_b_reserve == pytest.approx(40.0 * 1.30)
+    assert b.part_b_reserve != pytest.approx(1.2 * 100.0)
+
+
+def test_set_measured_part_b_feeds_part_a_hard():
+    """The whole point: a real measurement must actually move the hard stop.
+
+    Uses a 5 s clip, same regime as test_reserve_binds_on_short_clips: at
+    duration=100 the 1.5x factor cap already binds regardless of the reserve
+    (see test_part_a_hard_leaves_room_for_part_b), so a change to
+    part_b_reserve would not be visible through part_a_hard there -- the test
+    would pass for the wrong reason. At 5 s the RESERVE is what actually
+    constrains part_a_hard, so a real measurement moving it is observable.
+    """
+    cfg = BudgetConfig()
+    guessed = mk(duration=5.0, cfg=cfg)
+    assert guessed.part_a_hard == pytest.approx(7.0)     # reserve-bound, see above
+
+    measured_low = mk(duration=5.0, cfg=cfg)
+    measured_low.set_measured_part_b(1.0)      # far cheaper than the 1.2x guess
+    measured_high = mk(duration=5.0, cfg=cfg)
+    measured_high.set_measured_part_b(10.0)    # far more expensive
+
+    # A cheaper real Part B frees up more time for Part A, up to the 1.5x cap...
+    assert measured_low.part_a_hard > guessed.part_a_hard
+    assert measured_low.part_a_hard == pytest.approx(7.5)
+    # ...and a more expensive one claws it back, never going negative.
+    assert measured_high.part_a_hard < guessed.part_a_hard
+    assert measured_high.part_a_hard >= 0.0
+
+
+def test_set_measured_part_b_rejects_negative_input():
+    b = mk(duration=100.0)
+    b.set_measured_part_b(-5.0)
+    assert b.part_b_reserve >= 0.0
+
+
+def test_report_flags_whether_the_reserve_was_measured():
+    b = mk(duration=100.0)
+    assert b.report()["part_b_reserve_measured"] is False
+    b.set_measured_part_b(30.0)
+    assert b.report()["part_b_reserve_measured"] is True
+
+
+def test_measure_part_b_floor_on_a_real_small_clip(tmp_path):
+    """The probe must time cap.read() -- run_risk own call -- not grab()."""
+    cv2 = pytest.importorskip("cv2")
+    import numpy as np
+
+    from src.budget import measure_part_b_floor
+
+    p = tmp_path / "probe.mp4"
+    w = cv2.VideoWriter(str(p), cv2.VideoWriter_fourcc(*"mp4v"), 25.0, (64, 48))
+    for _ in range(60):
+        w.write(np.zeros((48, 64, 3), dtype=np.uint8))
+    w.release()
+
+    estimate, probe_wall = measure_part_b_floor(p, n_frames=60, n_probe=20)
+    assert estimate is not None
+    assert estimate > 0.0
+    assert probe_wall > 0.0
+    # 60 real frames at roughly the per-frame rate measured over 20 samples.
+    assert estimate == pytest.approx(probe_wall / 20 * 60, rel=0.5)
+
+
+def test_measure_part_b_floor_bounds_its_own_wall_time(tmp_path):
+    """The probe protects the budget it feeds; it must not itself run long."""
+    cv2 = pytest.importorskip("cv2")
+    import numpy as np
+
+    from src.budget import measure_part_b_floor
+
+    p = tmp_path / "probe2.mp4"
+    w = cv2.VideoWriter(str(p), cv2.VideoWriter_fourcc(*"mp4v"), 25.0, (32, 32))
+    for _ in range(500):
+        w.write(np.zeros((32, 32, 3), dtype=np.uint8))
+    w.release()
+
+    _estimate, probe_wall = measure_part_b_floor(
+        p, n_frames=500, n_probe=500, max_probe_sec=0.05)
+    assert probe_wall < 2.0, f"probe ran {probe_wall:.2f}s against a 0.05s cap"
+
+
+def test_measure_part_b_floor_on_an_unopenable_file_returns_none(tmp_path):
+    from src.budget import measure_part_b_floor
+
+    bad = tmp_path / "not_a_video.mp4"
+    bad.write_bytes(b"nonsense")
+    estimate, probe_wall = measure_part_b_floor(bad, n_frames=100)
+    assert estimate is None
+    assert probe_wall >= 0.0
+
+
+def test_measure_part_b_floor_on_a_zero_frame_probe(tmp_path):
+    """n_probe=0 must not divide by zero or read forever."""
+    cv2 = pytest.importorskip("cv2")
+    import numpy as np
+
+    from src.budget import measure_part_b_floor
+
+    p = tmp_path / "probe3.mp4"
+    w = cv2.VideoWriter(str(p), cv2.VideoWriter_fourcc(*"mp4v"), 25.0, (32, 32))
+    for _ in range(10):
+        w.write(np.zeros((32, 32, 3), dtype=np.uint8))
+    w.release()
+
+    estimate, _wall = measure_part_b_floor(p, n_frames=10, n_probe=0)
+    # n_probe clamped to at least 1, so a real frame is still read.
+    assert estimate is not None

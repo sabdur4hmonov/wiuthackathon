@@ -451,3 +451,149 @@ a timeout scores zero for both parts.
 Note `model_load` is timed separately and excluded from the per-frame rate — an
 early version amortised the one-off load across the first ten frames and aborted
 runs that would have finished comfortably.
+
+
+---
+
+## CP2: real footage findings (2026-09-23)
+
+The first real camera clip landed (`samples/sample_001.mp4`, gitignored --
+5.9 GB, not committed). Everything above this section was measured against
+synthetic fixtures. This is the first contact with the real format, and it
+changed two things.
+
+### The real format
+
+```
+codec:        h264, High 4:2:2 profile (avc1)
+pixel format: yuv422p10le  -- 10-bit, 4:2:2 chroma subsampling
+resolution:   3840x2160
+frame rate:   29.97 fps  (30000/1001, NOT a flat 30/1)
+colour:       bt709 -- standard Rec.709, NOT HLG or S-Log (no log gamma to correct for)
+bitrate:      ~140 Mbps video
+duration:     340.34 s (10200 frames) -- cv2's n_frames/fps agrees with the
+              container duration to the millisecond; no VFR mismatch on this
+              clip, though src.budget.probe_duration still guards against one
+```
+
+The container is XAVC, the format Sony broadcast/pro cameras write. 10-bit
+4:2:2 is a materially heavier decode than the 8-bit 4:2:0 every fixture in
+this repo was built against.
+
+### Measured: the real Part B floor
+
+`tools/bench.py` gained `--max-frames`, because a full 340 s pass is
+impractical for exploratory measurement (the first attempt, unbounded, ran
+uninterrupted for many minutes -- `timeout` under this shell could not
+actually kill the native Windows process; it had to be force-killed). Sampled
+from frame 0, extrapolated to the full clip, on this 8-core CPU machine:
+
+| sample | ms/frame | x realtime |
+|---|---|---|
+| 100 frames | 49.1 | 1.47x |
+| 1500 frames | 59.7 | 1.79x |
+
+The two disagree by ~21%: decode cost is not flat across a clip (GOP
+structure, reference-frame buffering, scene motion), and 100 frames from the
+very start is not representative. Both numbers are well BELOW the Colab
+2-vCPU measurement of 3.05x that motivated this investigation -- this 8-core
+machine has real spare cycles that Colab's 2 vCPUs did not. Part B alone,
+even at the higher 1.79x, still leaves headroom under the 3.0x harness budget.
+
+**Not yet done: a full-file confirmation pass, and a T4-class GPU
+measurement.** Both remain the two biggest open risks. The ~21% intra-clip
+variance is folded into `BudgetConfig.part_b_measured_safety` (1.30x) below.
+
+### Tested and rejected: decoding through ffmpeg for Part A
+
+The hypothesis: cv2 decodes and colour-converts every processed frame at full
+4K/10-bit before the detector immediately resizes it away, so piping through
+ffmpeg's own `scale` filter should decode once at a smaller size instead.
+Built (`src/ffdecode.py`, `PerceptionConfig.decoder`), then measured
+decode-only cost against the real clip, 300 processed frames, stride 2:
+
+| decoder | ms/processed-frame | vs cv2 |
+|---|---|---|
+| cv2 grab/retrieve, native 4K | 81.6 | -- |
+| ffmpeg piped to 1280 width | 104.0 | 0.78x (slower) |
+| ffmpeg piped to 960 width | 93.8 | 0.87x (slower) |
+| ffmpeg piped to 640 width | 81.9 | 1.00x (even) |
+
+**The hypothesis was wrong.** Never faster, at any width tested. Two reasons:
+H.264 decode of this stream dominates the per-frame cost and happens BEFORE
+any scale filter runs, so scaling the output does not reduce it; and cv2's
+`grab()`-only skip on non-stride frames is genuinely cheap (decode, no
+colour-convert or copy), while the pipe must fully decode, scale, convert and
+write EVERY frame to keep frame indices correct, so it pays full cost on the
+frames cv2 gets almost free. `PerceptionConfig.decoder` stays `"cv2"`.
+`src/ffdecode.py` is kept (tested, opt-in, falls back to cv2 automatically on
+any failure) rather than deleted, in case different footage or a `select`
+filter closes the gap later -- **do not flip the default without
+re-measuring.**
+
+### Built: an adaptive Part B reserve
+
+`BudgetConfig.part_b_reserve` was a flat 1.2x guess, made before any real
+footage existed. `detect_events` now measures it instead: at the top of every
+call, `src.budget.measure_part_b_floor` reads a handful of real frames with
+`cap.read()` -- run_risk's own call, not the cheaper `grab()`/`retrieve()`
+Stage 1 uses for itself -- and extrapolates. The probe is bounded twice, the
+same way `safety_margin` already was: a flat `part_b_probe_max_sec` (3.0 s)
+protects a huge clip from a long probe, and `part_b_probe_max_frac` (5% of
+the total budget) protects a tiny clip's already-thin budget from the probe's
+own fixed overhead -- the second bound did not exist on the first pass and
+was added after it was implicated (see "A real regression, found and fixed"
+below). `part_b_measured_safety` (1.30x headroom over the measurement) is set
+from the real ~21% intra-clip variance measured above, not a round number.
+
+A real run against the synthetic 60 s fixture: `1.2x fixed guess = 72.0s`
+became `measured = 22.7s` -- freeing real Part A time the fixed guess was
+reserving unnecessarily on a clip that turned out to be cheap to decode.
+
+### A real regression, found and fixed
+
+The first version of this change opened a second `cv2.VideoCapture` on every
+call -- one throwaway open to read native width/height, then a fresh open for
+the actual decode loop -- where CP0's original code opened exactly one.
+`tools/bench.py`'s own harness-contract tests (tiny ~1-1.6 s synthetic clips,
+`run_submission.py` run as a real subprocess, so the model is always cold)
+started failing: the clip's whole budget can be under 2 s, and the extra
+open/close was enough added overhead, stacked on a cold model load, to blow
+it. Fixed: `run_perception` now opens one `VideoCapture` for the default cv2
+path, exactly as before; a second, metadata-only open happens ONLY on the
+non-default ffmpeg path, which needs native width/height first to compute the
+scaled target size.
+
+### Found, not fixed: pre-existing flakiness on tiny clips
+
+After the fix above, `tests/test_harness_contract.py` still occasionally
+failed the same way (`test_00N.mp4: 5-6s used of a 4.8s budget`). Verified by
+`git stash`-ing every change from today and re-running the identical
+harness-contract suite against the last committed state: **the same failure
+reproduces on unmodified CP1 code.** `_BUDGET_CHECK_EVERY = 10` means the
+first stop-check cannot fire before 10 processed frames; on a clip with only
+~20 processed frames total and real (not cached-warm) CPU YOLO inference
+occasionally running north of 0.5-0.9 s/frame under load, reaching that first
+check point alone can exceed a budget that is only 1.5-3.0 s to begin with.
+This is a latent gap in CP0's own architecture, surfaced by today's heavier
+system load (large decode benchmarks, an ffmpeg subprocess comparison, a
+nearly-full disk), not introduced by anything in this session. Left
+undiagnosed further and unfixed: it is out of today's scope, and a proper fix
+(checking more eagerly on short clips, or immediately after the very first
+processed frame rather than waiting for a batch of 10) deserves its own pass
+rather than a rushed patch appended to an unrelated change. 356 of 360 tests
+pass; the 4 failures are exactly this pre-existing, load-sensitive gap.
+
+### Immediate next risks, in order
+
+1. **No T4 measurement exists.** Every number above is this 8-core CPU
+   machine. YOLO11s in fp16 on a T4 should be an order of magnitude faster,
+   but "should be" is a guess until `tools/bench.py` runs on one.
+2. **No full-file decode confirmation.** Both real numbers above are
+   extrapolated from a sample of the first 100-1500 frames (3-50 s of a
+   340 s clip). A full pass, or samples from multiple offsets, would close
+   this out.
+3. **The `_BUDGET_CHECK_EVERY` gap above**, if the hidden test set turns out
+   to include very short clips.
+4. **Zones are still un-authored** -- unchanged from CP1, still the single
+   blocking item for Part A to score above zero.
