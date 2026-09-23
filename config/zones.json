@@ -1,104 +1,1185 @@
 {
-  "_README": [
-    "SCENE GEOMETRY -- AUTHORED BY HAND. Nothing here is guessed or inferred.",
-    "Every geometric value below is null on purpose. The starter kit promised a",
-    "samples/camera.md describing the scene; it does not exist, so this file is",
-    "the only description of the scene the pipeline has.",
-    "",
-    "HOW TO FILL IT IN:",
-    "  1. python tools/extract_frames.py --video samples/<clip>.mp4 --out frames/",
-    "  2. open tools/annotate.html in a browser (no install, runs from file://),",
-    "     load that frame, draw every shape, press Download zones.json, and move",
-    "     the downloaded file over this one.",
-    "  3. python tools/draw_zones.py --image frames/<clip>_f000000.png --zones config/zones.json --out check.png",
-    "     Look at check.png. Do not trust this file until you have.",
-    "  4. python tools/validate_zones.py --zones config/zones.json",
-    "     Fails loudly while any null remains. The pipeline runs this on load.",
-    "",
-    "COORDINATES are pixels in the frame named by authored_against, origin at",
-    "the TOP-LEFT, x right, y DOWN. If you re-author against a different",
-    "resolution, update authored_against and the loader will rescale."
-  ],
-
-  "schema_version": 1,
-
-  "authored_against": {
-    "_draw": "Fill from the frame you annotated. The loader rescales every coordinate by image_width/height if the video resolution differs.",
-    "image_width": null,
-    "image_height": null,
-    "source_video": null,
-    "source_frame_idx": null
+ "_README": [
+  "SCENE GEOMETRY -- AUTHORED BY HAND. Nothing here is guessed or inferred.",
+  "Every geometric value below is null on purpose. The starter kit promised a",
+  "samples/camera.md describing the scene; it does not exist, so this file is",
+  "the only description of the scene the pipeline has.",
+  "",
+  "HOW TO FILL IT IN:",
+  "  1. python tools/extract_frames.py --video samples/<clip>.mp4 --out frames/",
+  "  2. open tools/annotate.html in a browser (no install, runs from file://),",
+  "     load that frame, draw every shape, press Download zones.json, and move",
+  "     the downloaded file over this one.",
+  "  3. python tools/draw_zones.py --image frames/<clip>_f000000.png --zones config/zones.json --out check.png",
+  "     Look at check.png. Do not trust this file until you have.",
+  "  4. python tools/validate_zones.py --zones config/zones.json",
+  "     Fails loudly while any null remains. The pipeline runs this on load.",
+  "",
+  "COORDINATES are pixels in the frame named by authored_against, origin at",
+  "the TOP-LEFT, x right, y DOWN. If you re-author against a different",
+  "resolution, update authored_against and the loader will rescale."
+ ],
+ "schema_version": 1,
+ "authored_against": {
+  "image_width": 3840,
+  "image_height": 2160,
+  "source_video": "sample_001.mp4",
+  "source_frame_idx": 3400
+ },
+ "carriageway": [
+  {
+   "id": "main",
+   "polygon": [
+    [
+     0.0,
+     25.0
+    ],
+    [
+     520.0,
+     157.0
+    ],
+    [
+     891.0,
+     222.0
+    ],
+    [
+     1261.0,
+     300.0
+    ],
+    [
+     1631.0,
+     380.0
+    ],
+    [
+     2001.0,
+     459.0
+    ],
+    [
+     2372.0,
+     537.0
+    ],
+    [
+     2539.0,
+     578.0
+    ],
+    [
+     2743.0,
+     667.0
+    ],
+    [
+     3113.0,
+     778.0
+    ],
+    [
+     3539.0,
+     870.0
+    ],
+    [
+     3650.0,
+     945.0
+    ],
+    [
+     3700.0,
+     1000.0
+    ],
+    [
+     3840.0,
+     1040.0
+    ],
+    [
+     3840.0,
+     2160.0
+    ],
+    [
+     2000.0,
+     2160.0
+    ],
+    [
+     1900.0,
+     1757.0
+    ],
+    [
+     1908.0,
+     1742.0
+    ],
+    [
+     1730.0,
+     1620.0
+    ],
+    [
+     1378.0,
+     1675.0
+    ],
+    [
+     1350.0,
+     1705.0
+    ],
+    [
+     1450.0,
+     1796.0
+    ],
+    [
+     1900.0,
+     1757.0
+    ],
+    [
+     2000.0,
+     2160.0
+    ],
+    [
+     500.0,
+     2160.0
+    ],
+    [
+     250.0,
+     1882.0
+    ],
+    [
+     835.0,
+     1846.0
+    ],
+    [
+     842.0,
+     1830.0
+    ],
+    [
+     650.0,
+     1698.0
+    ],
+    [
+     228.0,
+     1858.0
+    ],
+    [
+     250.0,
+     1882.0
+    ],
+    [
+     500.0,
+     2160.0
+    ],
+    [
+     0.0,
+     2160.0
+    ],
+    [
+     0.0,
+     1675.0
+    ],
+    [
+     180.0,
+     1592.0
+    ],
+    [
+     350.0,
+     1515.0
+    ],
+    [
+     500.0,
+     1442.0
+    ],
+    [
+     600.0,
+     1382.0
+    ],
+    [
+     660.0,
+     1310.0
+    ],
+    [
+     1000.0,
+     1545.0
+    ],
+    [
+     1500.0,
+     1487.0
+    ],
+    [
+     1505.0,
+     1470.0
+    ],
+    [
+     1262.0,
+     1333.0
+    ],
+    [
+     1215.0,
+     1342.0
+    ],
+    [
+     1000.0,
+     1545.0
+    ],
+    [
+     660.0,
+     1310.0
+    ],
+    [
+     652.0,
+     1250.0
+    ],
+    [
+     600.0,
+     1110.0
+    ],
+    [
+     520.0,
+     1060.0
+    ],
+    [
+     400.0,
+     860.0
+    ],
+    [
+     225.0,
+     650.0
+    ],
+    [
+     0.0,
+     539.9
+    ],
+    [
+     0.0,
+     159.9
+    ],
+    [
+     2055.0,
+     995.0
+    ],
+    [
+     2210.0,
+     1045.0
+    ],
+    [
+     2290.0,
+     1080.0
+    ],
+    [
+     2420.0,
+     1140.0
+    ],
+    [
+     2560.0,
+     1148.0
+    ],
+    [
+     2615.0,
+     1120.0
+    ],
+    [
+     2600.0,
+     1010.0
+    ],
+    [
+     2375.0,
+     1010.0
+    ],
+    [
+     2363.0,
+     1003.0
+    ],
+    [
+     0.0,
+     145.4
+    ]
+   ]
+  }
+ ],
+ "lanes": [
+  {
+   "id": "SB1_flare",
+   "polygon": [
+    [
+     225.0,
+     650.0
+    ],
+    [
+     838.5,
+     1025.9
+    ],
+    [
+     520.0,
+     1060.0
+    ],
+    [
+     400.0,
+     860.0
+    ]
+   ],
+   "direction_from": [
+    393.5,
+    836.3
+   ],
+   "direction_to": [
+    598.2,
+    961.6
+   ],
+   "permitted_manoeuvres": [],
+   "governed_by_stop_line": "SL_SB"
   },
-
-  "carriageway": [
-    {
-      "id": "main",
-      "_draw": "The drivable road surface as one polygon: kerb to kerb, INCLUDING the intersection box, EXCLUDING pavements, verges and parking bays. Anything outside this is not road, so a pedestrian here is on the carriageway. Trace it generously around the far end where perspective compresses it -- a few pixels there is many metres.",
-      "polygon": null
-    }
-  ],
-
-  "lanes": [
-    {
-      "id": "TODO_lane_1",
-      "_draw": "One polygon per lane of travel, from the frame edge (or the stop line) to where the lane leaves the frame. Lanes must not overlap; together they should tile the carriageway. Add one entry per lane -- duplicate this block.",
-      "polygon": null,
-      "_draw_direction": "Draw an ARROW along the lane, in the direction traffic legally flows. Two points: tail then head. The loader turns this into a unit vector; a track whose heading differs from it by more than the wrong_way threshold is driving against traffic.",
-      "direction_from": null,
-      "direction_to": null,
-      "_permitted": "Which manoeuvres are legal FROM this lane. Any of: through, left, right, u_turn. Read the painted arrows on the road surface. An empty list means unknown, not 'none'.",
-      "permitted_manoeuvres": [],
-      "_governed": "id of the stop_lines entry this lane must stop at, or null if this lane has no stop line in frame.",
-      "governed_by_stop_line": null
-    }
-  ],
-
-  "stop_lines": [
-    {
-      "id": "TODO_stopline_1",
-      "_draw": "The painted transverse bar vehicles must stop behind. Two points, LEFT-TO-RIGHT AS SEEN BY THE APPROACHING DRIVER. The orientation fixes the sign of the crossing test, so do not reverse it later.",
-      "segment": null,
-      "_approach": "Which signed side approaching vehicles start on, +1 or -1, per src.geometry.side_of_line with the segment as authored. annotate.html computes this for you: after the two bar clicks, click once where a waiting car would sit.",
-      "approach_side": null,
-      "governs_lanes": []
-    }
-  ],
-
-  "crossings": [
-    {
-      "id": "TODO_crossing_1",
-      "_draw": "The pedestrian crossing surface (zebra bars or the marked corridor) as a polygon. A pedestrian inside this is NOT jaywalking; a vehicle inside it while a pedestrian is on it is failure_to_yield.",
-      "polygon": null
-    }
-  ],
-
-  "signal_queue_zones": [
-    {
-      "id": "TODO_queue_1",
-      "_draw": "Where vehicles legitimately sit still waiting for a green: roughly the last few car lengths before each stop line. stopped_vehicle is suppressed inside this polygon, otherwise every red phase becomes a false positive. Err on the LARGE side -- a missed stopped_vehicle costs one FN, a queue full of them costs many FPs.",
-      "polygon": null,
-      "lanes": []
-    }
-  ],
-
-  "traffic_lights": [
-    {
-      "id": "TODO_signal_1",
-      "_draw": "Tight box around the signal head's lamps only, as [x1, y1, x2, y2]. Exclude the housing and sky. If no signal is visible in frame, leave this list EMPTY -- do not invent one; the red_light and stop_line rules will then have to infer phase from traffic behaviour instead.",
-      "roi": null,
-      "controls_lanes": []
-    }
-  ],
-
-  "lane_markings": [
-    {
-      "id": "TODO_marking_1",
-      "_draw": "Longitudinal painted lines, as a two-point segment each. Split a line into several entries where its style changes. style must be one of: solid, dashed, double_solid. Only crossing a solid or double_solid is solid_line_crossing.",
-      "segment": null,
-      "style": null,
-      "separates": []
-    }
-  ],
-
-  "notes": "Free text: anything about the scene a rule author needs and cannot see from the geometry alone (e.g. 'the far approach is one-way', 'the signal is out of frame to the left')."
+  {
+   "id": "SB2",
+   "polygon": [
+    [
+     0.0,
+     394.4
+    ],
+    [
+     1116.0,
+     996.6
+    ],
+    [
+     838.5,
+     1025.9
+    ],
+    [
+     225.0,
+     650.5
+    ],
+    [
+     0.0,
+     512.9
+    ]
+   ],
+   "direction_from": [
+    330.3,
+    659.1
+   ],
+   "direction_to": [
+    541.5,
+    773.0
+   ],
+   "permitted_manoeuvres": [],
+   "governed_by_stop_line": "SL_SB"
+  },
+  {
+   "id": "SB3",
+   "polygon": [
+    [
+     0.0,
+     310.9
+    ],
+    [
+     1376.0,
+     969.0
+    ],
+    [
+     1116.0,
+     996.6
+    ],
+    [
+     0.0,
+     394.4
+    ]
+   ],
+   "direction_from": [
+    514.7,
+    615.9
+   ],
+   "direction_to": [
+    731.3,
+    719.5
+   ],
+   "permitted_manoeuvres": [],
+   "governed_by_stop_line": "SL_SB"
+  },
+  {
+   "id": "SB4",
+   "polygon": [
+    [
+     0.0,
+     234.3
+    ],
+    [
+     1624.7,
+     942.7
+    ],
+    [
+     1376.0,
+     969.0
+    ],
+    [
+     0.0,
+     310.9
+    ]
+   ],
+   "direction_from": [
+    640.2,
+    566.3
+   ],
+   "direction_to": [
+    860.2,
+    662.2
+   ],
+   "permitted_manoeuvres": [],
+   "governed_by_stop_line": "SL_SB"
+  },
+  {
+   "id": "SB5",
+   "polygon": [
+    [
+     0.0,
+     159.9
+    ],
+    [
+     1864.0,
+     917.4
+    ],
+    [
+     1624.7,
+     942.7
+    ],
+    [
+     0.0,
+     234.3
+    ]
+   ],
+   "direction_from": [
+    761.0,
+    518.4
+   ],
+   "direction_to": [
+    983.3,
+    608.8
+   ],
+   "permitted_manoeuvres": [],
+   "governed_by_stop_line": "SL_SB"
+  },
+  {
+   "id": "NB1",
+   "polygon": [
+    [
+     300.0,
+     192.8
+    ],
+    [
+     2618.2,
+     983.6
+    ],
+    [
+     2590.0,
+     986.0
+    ],
+    [
+     2375.0,
+     1010.0
+    ],
+    [
+     2363.0,
+     1003.0
+    ],
+    [
+     300.0,
+     254.3
+    ]
+   ],
+   "direction_from": [
+    1871.3,
+    777.0
+   ],
+   "direction_to": [
+    1644.1,
+    699.5
+   ],
+   "permitted_manoeuvres": [],
+   "governed_by_stop_line": null
+  },
+  {
+   "id": "NB2",
+   "polygon": [
+    [
+     300.0,
+     153.0
+    ],
+    [
+     2851.3,
+     971.7
+    ],
+    [
+     2618.2,
+     983.6
+    ],
+    [
+     300.0,
+     192.8
+    ]
+   ],
+   "direction_from": [
+    1631.6,
+    611.9
+   ],
+   "direction_to": [
+    1403.1,
+    538.6
+   ],
+   "permitted_manoeuvres": [],
+   "governed_by_stop_line": null
+  },
+  {
+   "id": "NB3",
+   "polygon": [
+    [
+     300.0,
+     129.1
+    ],
+    [
+     3134.4,
+     957.3
+    ],
+    [
+     2851.3,
+     971.7
+    ],
+    [
+     300.0,
+     153.0
+    ]
+   ],
+   "direction_from": [
+    1761.6,
+    586.4
+   ],
+   "direction_to": [
+    1531.2,
+    519.1
+   ],
+   "permitted_manoeuvres": [],
+   "governed_by_stop_line": null
+  },
+  {
+   "id": "NB4_far_busstop",
+   "polygon": [
+    [
+     300.0,
+     101.2
+    ],
+    [
+     520.0,
+     157.0
+    ],
+    [
+     891.0,
+     222.0
+    ],
+    [
+     1261.0,
+     300.0
+    ],
+    [
+     1631.0,
+     380.0
+    ],
+    [
+     2001.0,
+     459.0
+    ],
+    [
+     2372.0,
+     537.0
+    ],
+    [
+     2539.0,
+     578.0
+    ],
+    [
+     2743.0,
+     667.0
+    ],
+    [
+     3113.0,
+     778.0
+    ],
+    [
+     3539.0,
+     870.0
+    ],
+    [
+     3650.0,
+     945.0
+    ],
+    [
+     3134.4,
+     957.3
+    ],
+    [
+     300.0,
+     129.1
+    ]
+   ],
+   "direction_from": [
+    2114.8,
+    539.4
+   ],
+   "direction_to": [
+    1884.4,
+    472.1
+   ],
+   "permitted_manoeuvres": [],
+   "governed_by_stop_line": null
+  },
+  {
+   "id": "NB_approach",
+   "polygon": [
+    [
+     2747.8,
+     1088.6
+    ],
+    [
+     3700.0,
+     1015.0
+    ],
+    [
+     3840.0,
+     1040.0
+    ],
+    [
+     3840.0,
+     1438.1
+    ]
+   ],
+   "direction_from": [
+    3645.7,
+    1183.7
+   ],
+   "direction_to": [
+    3418.2,
+    1107.2
+   ],
+   "permitted_manoeuvres": [],
+   "governed_by_stop_line": null
+  },
+  {
+   "id": "SB_exit",
+   "polygon": [
+    [
+     2640.0,
+     1096.9
+    ],
+    [
+     2747.8,
+     1088.6
+    ],
+    [
+     3840.0,
+     1438.1
+    ],
+    [
+     3840.0,
+     2160.0
+    ],
+    [
+     2450.0,
+     2160.0
+    ]
+   ],
+   "direction_from": [
+    2991.7,
+    1545.4
+   ],
+   "direction_to": [
+    3215.5,
+    1632.0
+   ],
+   "permitted_manoeuvres": [],
+   "governed_by_stop_line": null
+  },
+  {
+   "id": "LEG_out",
+   "polygon": [
+    [
+     0.0,
+     1675.0
+    ],
+    [
+     180.0,
+     1592.0
+    ],
+    [
+     350.0,
+     1515.0
+    ],
+    [
+     475.0,
+     1590.0
+    ],
+    [
+     695.0,
+     1710.0
+    ],
+    [
+     875.0,
+     1790.0
+    ],
+    [
+     1015.0,
+     1870.0
+    ],
+    [
+     1085.0,
+     1950.0
+    ],
+    [
+     1165.0,
+     2080.0
+    ],
+    [
+     1200.0,
+     2160.0
+    ],
+    [
+     0.0,
+     2160.0
+    ]
+   ],
+   "direction_from": [
+    759.5,
+    1815.4
+   ],
+   "direction_to": [
+    520.5,
+    1837.7
+   ],
+   "permitted_manoeuvres": [],
+   "governed_by_stop_line": null
+  }
+ ],
+ "stop_lines": [
+  {
+   "id": "SL_SB",
+   "segment": [
+    [
+     1896.0,
+     914.0
+    ],
+    [
+     526.0,
+     1059.0
+    ]
+   ],
+   "approach_side": 1,
+   "governs_lanes": [
+    "SB1_flare",
+    "SB2",
+    "SB3",
+    "SB4",
+    "SB5"
+   ]
+  }
+ ],
+ "crossings": [
+  {
+   "id": "X_avenue_south",
+   "polygon": [
+    [
+     650.0,
+     1205.1
+    ],
+    [
+     2300.0,
+     1045.7
+    ],
+    [
+     2300.0,
+     1109.1
+    ],
+    [
+     735.0,
+     1312.5
+    ],
+    [
+     652.0,
+     1250.0
+    ]
+   ]
+  },
+  {
+   "id": "X_avenue_north",
+   "polygon": [
+    [
+     2590.0,
+     985.0
+    ],
+    [
+     3670.0,
+     930.0
+    ],
+    [
+     3700.0,
+     1015.0
+    ],
+    [
+     2600.0,
+     1100.0
+    ]
+   ]
+  },
+  {
+   "id": "X_leg",
+   "polygon": [
+    [
+     350.0,
+     1515.0
+    ],
+    [
+     680.0,
+     1425.0
+    ],
+    [
+     775.0,
+     1490.0
+    ],
+    [
+     990.0,
+     1590.0
+    ],
+    [
+     1165.0,
+     1670.0
+    ],
+    [
+     1305.0,
+     1740.0
+    ],
+    [
+     1465.0,
+     1820.0
+    ],
+    [
+     1555.0,
+     1900.0
+    ],
+    [
+     1665.0,
+     2010.0
+    ],
+    [
+     1810.0,
+     2160.0
+    ],
+    [
+     1200.0,
+     2160.0
+    ],
+    [
+     1165.0,
+     2080.0
+    ],
+    [
+     1085.0,
+     1950.0
+    ],
+    [
+     1015.0,
+     1870.0
+    ],
+    [
+     875.0,
+     1790.0
+    ],
+    [
+     695.0,
+     1710.0
+    ],
+    [
+     475.0,
+     1590.0
+    ]
+   ]
+  }
+ ],
+ "signal_queue_zones": [
+  {
+   "id": "Q_SB_approach",
+   "lanes": [
+    "SB1_flare",
+    "SB2",
+    "SB3",
+    "SB4",
+    "SB5"
+   ],
+   "polygon": [
+    [
+     0.0,
+     159.9
+    ],
+    [
+     2055.0,
+     995.0
+    ],
+    [
+     2250.0,
+     1065.5
+    ],
+    [
+     655.0,
+     1219.6
+    ],
+    [
+     600.0,
+     1110.0
+    ],
+    [
+     520.0,
+     1060.0
+    ],
+    [
+     400.0,
+     860.0
+    ],
+    [
+     225.0,
+     650.0
+    ],
+    [
+     0.0,
+     512.9
+    ]
+   ]
+  },
+  {
+   "id": "Q_NB_approach",
+   "lanes": [
+    "NB_approach"
+   ],
+   "polygon": [
+    [
+     2747.8,
+     1088.6
+    ],
+    [
+     3700.0,
+     1015.0
+    ],
+    [
+     3840.0,
+     1040.0
+    ],
+    [
+     3840.0,
+     1438.1
+    ]
+   ]
+  },
+  {
+   "id": "Q_NB_busstop",
+   "lanes": [
+    "NB4_far_busstop"
+   ],
+   "polygon": [
+    [
+     1150.0,
+     276.6
+    ],
+    [
+     1631.0,
+     380.0
+    ],
+    [
+     2001.0,
+     459.0
+    ],
+    [
+     2350.0,
+     532.4
+    ],
+    [
+     2350.0,
+     728.1
+    ],
+    [
+     1150.0,
+     377.4
+    ]
+   ]
+  },
+  {
+   "id": "Q_box_left_turn",
+   "lanes": [],
+   "polygon": [
+    [
+     735.0,
+     1312.5
+    ],
+    [
+     2300.0,
+     1109.1
+    ],
+    [
+     2420.0,
+     1145.0
+    ],
+    [
+     2640.0,
+     1125.0
+    ],
+    [
+     2760.0,
+     1350.0
+    ],
+    [
+     2400.0,
+     1650.0
+    ],
+    [
+     1520.0,
+     1480.0
+    ],
+    [
+     1000.0,
+     1545.0
+    ],
+    [
+     760.0,
+     1480.0
+    ]
+   ]
+  }
+ ],
+ "traffic_lights": [
+  {
+   "id": "TL_median_nose",
+   "roi": [
+    2298,
+    728,
+    2332,
+    826
+   ],
+   "controls_lanes": [
+    "SB1_flare",
+    "SB2",
+    "SB3",
+    "SB4",
+    "SB5"
+   ]
+  }
+ ],
+ "lane_markings": [
+  {
+   "id": "M_SB1_SB2",
+   "segment": [
+    [
+     247,
+     664
+    ],
+    [
+     838.5,
+     1025.9
+    ]
+   ],
+   "style": "solid",
+   "separates": [
+    "SB1_flare",
+    "SB2"
+   ]
+  },
+  {
+   "id": "M_SB2_SB3",
+   "segment": [
+    [
+     420,
+     621
+    ],
+    [
+     1116.0,
+     996.6
+    ]
+   ],
+   "style": "solid",
+   "separates": [
+    "SB2",
+    "SB3"
+   ]
+  },
+  {
+   "id": "M_SB3_SB4",
+   "segment": [
+    [
+     178,
+     396
+    ],
+    [
+     1376.0,
+     969.0
+    ]
+   ],
+   "style": "solid",
+   "separates": [
+    "SB3",
+    "SB4"
+   ]
+  },
+  {
+   "id": "M_SB4_SB5",
+   "segment": [
+    [
+     130,
+     291
+    ],
+    [
+     1624.7,
+     942.7
+    ]
+   ],
+   "style": "solid",
+   "separates": [
+    "SB4",
+    "SB5"
+   ]
+  },
+  {
+   "id": "M_NB1_NB2",
+   "segment": [
+    [
+     375.0,
+     218.4
+    ],
+    [
+     2618.2,
+     983.6
+    ]
+   ],
+   "style": "dashed",
+   "separates": [
+    "NB1",
+    "NB2"
+   ]
+  },
+  {
+   "id": "M_NB2_NB3",
+   "segment": [
+    [
+     550.0,
+     233.2
+    ],
+    [
+     2851.3,
+     971.7
+    ]
+   ],
+   "style": "dashed",
+   "separates": [
+    "NB2",
+    "NB3"
+   ]
+  },
+  {
+   "id": "M_NB3_NB4",
+   "segment": [
+    [
+     667.0,
+     236.3
+    ],
+    [
+     3134.4,
+     957.3
+    ]
+   ],
+   "style": "dashed",
+   "separates": [
+    "NB3",
+    "NB4_far_busstop"
+   ]
+  }
+ ],
+ "notes": "DRAFT (Claude, 2026-09-24) - needs human review. Traced on frames/cleanplate_pose_A.png (per-pixel median of 60 settled frames from sample_001 f1000+ and sample_002), registered to sample_001 f3400 within ~1 px. Scene: divided avenue from the upper-left to the right edge with a raised median; a one-way OUTBOUND leg at the bottom-left under the diagonal zebra; camera high on the SW corner. SB = near side of the median, flows down-right to the stop line; NB = far side, enters from the right edge and flows to the upper-left. CAMERA POSE: this geometry fits sample_001 after ~frame 900 and all of sample_002. sample_001 frames 0-~900 sit ~22 px off; sample_004 ~15-60 px off; sample_003 ~55-150 px off (shift -130,+77, scale 1.014, rot -1 deg) - a static zones.json is NOT valid there without per-video registration. DIRECTIONS: every lane arrow is along its painted lines with the sign taken from optical flow measured over 40 one-second windows. MANOEUVRES: no painted lane arrows are visible, so permitted_manoeuvres is empty (unknown) everywhere; flow suggests SB1_flare carries the right turn into the bottom-left leg. NB approach: no stop line visible and its signal faces away from the camera, so red_light/stop_line cannot be judged for NB. SIGNAL: TL_median_nose is the only readable head (red top, amber middle, green bottom; ROI encloses all three lamps in pose A; green reads confirmed by SB traffic crossing the stop line 84% (sample_001) / 69% (sample_002) of the time; red lamp lights only 3-11 px so src/thresholds.py min_lit_pixels=12 returns UNKNOWN for most red phases - a threshold calibration issue, not the ROI); the overhead gantry heads show only backplates; the 2-lamp head on the camera-corner mast is unused (purpose unknown). NB left-turners cross the SB through stream into the bottom-left leg; that conflict area deliberately has no lane. PARKING: the left parking bay and the right corner plaza are outside the carriageway; buses dwell at the NB bus stop (Q_NB_busstop). The service road beyond the far sidewalk at the very top is excluded."
 }
