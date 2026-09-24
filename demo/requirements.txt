@@ -1,6 +1,7 @@
-# Hugging Face Space on ZeroGPU: the default (CUDA) torch wheel from PyPI.
-# (For CPU hardware, add --extra-index-url https://download.pytorch.org/whl/cpu
-# to get the much smaller CPU wheel.)
+# Demo dependencies (Streamlit Community Cloud reads this file: it sits next
+# to the entrypoint). CPU hosts: the CPU torch wheel keeps the install small.
+# For a ZeroGPU Space, drop the index line to get the default CUDA wheel.
+--extra-index-url https://download.pytorch.org/whl/cpu
 torch>=2.2
 torchvision>=0.17
 ultralytics>=8.3.0
@@ -12,3 +13,4 @@ scipy>=1.11
 matplotlib>=3.7
 gradio>=4.44
 spaces            # ZeroGPU decorator; harmless on CPU hardware
+streamlit>=1.30
