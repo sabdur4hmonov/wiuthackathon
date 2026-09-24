@@ -3,6 +3,11 @@
  "duration_sec": 127.627,
  "events": [
   [
+   10.577,
+   25.092,
+   "stopped_vehicle"
+  ],
+  [
    19.086,
    25.092,
    "jaywalking"
@@ -10,6 +15,21 @@
   [
    26.593,
    33.6,
+   "jaywalking"
+  ],
+  [
+   69.636,
+   71.638,
+   "jaywalking"
+  ],
+  [
+   72.639,
+   74.641,
+   "jaywalking"
+  ],
+  [
+   112.179,
+   114.181,
    "jaywalking"
   ]
  ]

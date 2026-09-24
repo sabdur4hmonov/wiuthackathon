@@ -110,13 +110,14 @@ class BudgetConfig:
     # else, extrapolates to the full frame count, and Budget.part_b_reserve
     # uses that measurement instead of the fixed multiplier whenever one is
     # available (Budget.set_measured_part_b). See src/budget.measure_part_b_floor.
-    part_b_probe_frames: int = 30    # frames to sample, split over 3 positions
+    part_b_probe_frames: int = 15    # frames to sample, split over 3 positions
     # Hard cap on the probe's own wall time. 3 s was too tight for three
     # positions on the 4K clips: each seek warms up by decoding from the
     # previous keyframe (up to ~1 s), and the probe stopped after one or two
-    # positions. 8 s is 0.8% of a 5-minute clip's budget; short clips are
-    # held to part_b_probe_max_frac below.
-    part_b_probe_max_sec: float = 8.0
+    # positions. It now only decides OPTIONAL density (the keyframe baseline
+    # always runs), and on the 4K clips it cost 9-11 s of Part A when the
+    # laptop was slow: 4 s and 15 frames (5 per position) is enough for that.
+    part_b_probe_max_sec: float = 4.0
     # ...but never more than this FRACTION of the video's own total budget --
     # same reasoning as safety_margin_frac: a flat 3.0s cap is fine for the
     # multi-minute real test clips, but on a very short clip (harness contract
@@ -304,8 +305,12 @@ class RiskConfig:
     # our work, extrapolated from progress so far) exceeds this multiple of
     # the duration: 3.0x total minus Part A's share (~0.2-0.35x on a GPU box)
     # and a margin. From then on step() returns the last score.
-    part_b_wall_limit_x: float = 2.3
-    guard_min_progress: float = 0.03   # do not extrapolate before this share of the video
+    # MEASURED 2026-09-25: on the dev laptop's slow days the harness decode
+    # ALONE runs sample_001 at ~2.9x; one harness run ended at 3.02x and was
+    # wiped. 2.0x, judged from 1% in, stops our work within the first seconds
+    # on such a machine and leaves the harness its whole margin.
+    part_b_wall_limit_x: float = 2.0
+    guard_min_progress: float = 0.01   # do not extrapolate before this share of the video
 
 
 @dataclass(frozen=True)
