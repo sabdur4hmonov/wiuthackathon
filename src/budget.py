@@ -11,13 +11,18 @@ harness replaces the whole entry with {"events": [], "risk": []}. A slow
 Part B therefore does not cost Part B, it costs Part A as well. Everything in
 this module exists to make that outcome impossible.
 
-Two rules follow:
+The policy (CP4):
 
-1. Part A must stop early enough to leave Part B a full decode pass
-   (part_b_reserve x duration). Part B cannot be shortened: the harness
-   re-decodes every frame regardless of what step() does.
-2. Running long must degrade, never fail. should_stop() going True means
-   "emit events from the frames processed so far", not "raise".
+1. The keyframe BASELINE pass always runs to completion. Part B is the default
+   RiskEstimator and scores the same whether or not the video is wiped, so a
+   Part A starved to zero and a wiped video both score nothing: running the
+   baseline is never worse. It costs ~0.1-0.3x realtime on the 4K clips.
+2. Part B's measured decode (median of three probes, measure_part_b_floor)
+   decides only whether there is room for OPTIONAL density beyond the
+   baseline (headroom_x). Lighter clips measure lighter and buy it
+   automatically; the 4K test clips on an 8-core CPU box do not.
+3. The cv2 fallback decoder (no PyAV) still stops at part_a_hard: it decodes
+   every frame and cannot be trusted to finish.
 """
 from __future__ import annotations
 
@@ -26,11 +31,18 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import numpy as np
+
 from .config import CFG, BudgetConfig
 
 
+PROBE_POSITIONS = (0.1, 0.5, 0.85)
+
+
 def measure_part_b_floor(video_path: str | Path, n_frames: int,
-                         n_probe: int = 40, max_probe_sec: float = 3.0
+                         n_probe: int = 40, max_probe_sec: float = 3.0,
+                         positions: tuple[float, ...] = PROBE_POSITIONS,
+                         rates_out: list | None = None,
                          ) -> tuple[float | None, float]:
     """Probe the REAL, unavoidable cost of run_submission.py's Part B decode.
 
@@ -42,39 +54,64 @@ def measure_part_b_floor(video_path: str | Path, n_frames: int,
     1's own optimisation (see run_perception) and understates run_risk's real
     cost, which always pays the full decode + BGR conversion + copy.
 
-    Bounded two ways so the probe itself cannot eat the budget it is trying to
-    protect: at most ``n_probe`` frames, and abandoned early past
-    ``max_probe_sec`` of wall clock (returning whatever rate the frames read so
-    far imply). On a very short or corrupt clip this can read fewer frames than
-    asked, including zero.
+    THREE short probes, at different positions in the file, and the MEDIAN
+    rate: decode cost is not flat across a clip (a 100-frame probe from frame 0
+    and a 1500-frame one differed by 21% on sample_001), and a single probe
+    lets one unlucky stretch -- or one hiccup on a shared machine -- decide the
+    whole budget. Each probe seeks, reads one frame untimed (the seek decodes
+    from the previous keyframe, which run_risk never pays), then times plain
+    reads.
+
+    Bounded so the probe itself cannot eat the budget it is trying to protect:
+    ``n_probe`` frames in total, and ``max_probe_sec`` of wall clock in total,
+    split across the positions. On a very short or corrupt clip this can read
+    fewer frames than asked, including zero.
 
     Returns (estimated_total_part_b_sec, probe_wall_sec). The estimate is None
     when nothing could be read at all -- callers should fall back to the fixed
     BudgetConfig.part_b_reserve multiplier in that case, not treat None as zero.
+    Per-probe seconds-per-frame are appended to ``rates_out`` when given.
     """
     import cv2
 
     t0 = time.perf_counter()
-    read = 0
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         return None, time.perf_counter() - t0
+    rates: list[float] = []
+    positions = tuple(positions) or (0.0,)
+    per_probe = max(1, int(n_probe) // len(positions))
+    per_sec = max_probe_sec / len(positions)
     try:
-        for _ in range(max(1, n_probe)):
-            ok, _frame = cap.read()          # exactly run_risk's call, not grab()
-            if not ok:
-                break
-            read += 1
+        # n_probe <= 0 still reads one frame at each position.
+        for pos in positions:
+            start = int(max(0, min(n_frames - per_probe - 1, pos * n_frames)))
+            if start > 0:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, start)
+                if not cap.read()[0]:            # seek warm-up, untimed
+                    continue
+            t = time.perf_counter()
+            read = 0
+            for _ in range(per_probe):
+                ok, _frame = cap.read()          # exactly run_risk's call, not grab()
+                if not ok:
+                    break
+                read += 1
+                if time.perf_counter() - t >= per_sec:
+                    break
+            if read:
+                rates.append((time.perf_counter() - t) / read)
             if time.perf_counter() - t0 >= max_probe_sec:
                 break
     finally:
         cap.release()
 
     probe_wall = time.perf_counter() - t0
-    if read == 0:
+    if rates_out is not None:
+        rates_out.extend(rates)
+    if not rates:
         return None, probe_wall
-    sec_per_frame = probe_wall / read
-    return sec_per_frame * max(0, n_frames), probe_wall
+    return float(np.median(rates)) * max(0, n_frames), probe_wall
 
 
 def probe_duration(video_path: str | Path) -> tuple[float, float, int]:
@@ -199,6 +236,19 @@ class Budget:
 
     def remaining_to_hard(self) -> float:
         return self.part_a_hard - self.elapsed()
+
+    def headroom_x(self) -> float | None:
+        """Time left for OPTIONAL Part A work, as a multiple of the video
+        duration: the total budget minus what Part B's measured decode needs
+        (with its safety factor), the safety margin and what has been used.
+
+        None without a real Part B measurement: optional work is never bought
+        on the strength of the fixed fallback guess.
+        """
+        if self._measured_part_b_sec is None or not self.duration:
+            return None
+        left = self.total_budget - self.part_b_reserve - self.safety_margin - self.elapsed()
+        return left / self.duration
 
     def over_target(self) -> bool:
         return self.elapsed() > self.part_a_target

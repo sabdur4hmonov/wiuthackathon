@@ -132,6 +132,18 @@ class BudgetConfig:
     # confirmation exists (tools/bench.py without --max-frames).
     part_b_measured_safety: float = 1.30  # headroom over the measured rate
 
+    # -- optional density beyond the keyframe baseline (CP4) -----------------
+    # The keyframe pass always completes. When the measured Part B leaves at
+    # least dense_min_headroom_x of the video's duration spare at the start of
+    # Stage 1, it decodes dense_skip_frame instead (NONREF = I+P, one frame
+    # every 0.1 s on the real clips) -- dense enough for wrong_way and
+    # congestion (max_sample_sec 0.2). If the dense pass then projects past
+    # part_a_hard it drops back to keyframes at the next keyframe and finishes
+    # there. MEASURED dense cost on the 4K clips, 8-core box: decode 0.53x
+    # realtime (NONREF + downscale), plus five times the keyframe inference.
+    dense_skip_frame: str = "NONREF"
+    dense_min_headroom_x: float = 1.0
+
 
 # --------------------------------------------------------------------------
 # perception

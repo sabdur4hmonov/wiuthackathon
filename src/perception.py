@@ -183,12 +183,15 @@ def run_perception(video_path: str | Path,
                    budget: Budget,
                    cfg: PerceptionConfig | None = None,
                    verbose: bool = True) -> TrackTable:
-    """Decode, detect and track. Returns whatever was finished in time.
+    """Decode, detect and track.
 
-    Degrades rather than fails: on a budget stop the table is returned with
-    complete=False and processed_until_sec set, so Stage 2 can still emit events
-    for the part of the video that was seen. A partial answer scores; a timeout
-    scores zero for BOTH parts.
+    On the pyav path (the default) the keyframe pass is never stopped: it costs
+    ~0.1-0.3x realtime, and a starved Part A scores the same as a wiped video.
+    Only optional density (dense_skip_frame) depends on the budget.
+
+    The cv2/ffmpeg fallbacks decode every frame and still degrade rather than
+    fail: on a budget stop the table is returned with complete=False and
+    processed_until_sec set, so Stage 2 can emit events for what was seen.
     """
     import cv2
 
@@ -323,15 +326,6 @@ def run_perception(video_path: str | Path,
                 pass
             align_state["sec"] += time.perf_counter() - t_al
 
-    def _project_by_position(frame_idx):
-        done = frame_idx + 1
-        if budget.project_overrun(done, budget.n_frames, loop_t0):
-            budget.force_stop(
-                f"projected overrun at frame {done}/{budget.n_frames} after "
-                f"{budget.elapsed():.1f}s, limit {budget.part_a_hard:.1f}s")
-            return True
-        return False
-
     def _should_stop_after(processed_count):
         """Shared budget check, invoked identically from either decode path."""
         if processed_count % _BUDGET_CHECK_EVERY != 0:
@@ -347,16 +341,33 @@ def run_perception(video_path: str | Path,
         return False
 
     seen: list[int] = []
+    downgraded_at = 0
+    baseline_finished = False
 
     try:
         if av_reader is not None:
-            # Only the frames skip_frame lets through are decoded at all. The
-            # budget projection goes by POSITION in the video (source frame
-            # index), since the number of keyframes is not known up front.
+            # Only the frames skip_frame lets through are decoded at all.
+            #
+            # BUDGET POLICY (src/budget.py): the keyframe baseline is never
+            # stopped -- a starved Part A scores the same as a wiped video, so
+            # finishing it is never worse. Density beyond it is optional: taken
+            # only if the measured Part B leaves room, and dropped back to
+            # keyframes as soon as it projects past part_a_hard.
             #
             # Detection is model.predict; tracking is src/tracker.py, ByteTrack
             # with a motion-tolerant association. Stock ByteTrack (model.track)
             # cannot link a walking pedestrian across 0.5 s.
+            headroom = budget.headroom_x()
+            dense = (headroom is not None
+                     and headroom >= budget.cfg.dense_min_headroom_x
+                     and cfg.skip_frame != budget.cfg.dense_skip_frame)
+            if dense:
+                av_reader.set_skip_frame(budget.cfg.dense_skip_frame)
+                decoder_used = f"pyav/{budget.cfg.dense_skip_frame}"
+            budget.note("density", 0.0,
+                        f"{'dense ' + budget.cfg.dense_skip_frame if dense else 'keyframes only'}"
+                        f" (headroom {'n/a' if headroom is None else f'{headroom:.2f}x'},"
+                        f" dense needs {budget.cfg.dense_min_headroom_x:.2f}x)")
             predict_kwargs = build_predict_kwargs(cfg, device)
             kf_tracker = None
             for idx, frame in av_reader.frames():
@@ -364,20 +375,27 @@ def run_perception(video_path: str | Path,
                 _keep_for_alignment(frame, t_sec)
                 det = _detections(model.predict(frame, **predict_kwargs), sx, sy)
                 if kf_tracker is None:
-                    # The real step is known from the second keyframe on.
+                    # The real step is known from the second sample on.
                     kf_tracker = tracker.make_tracker(
                         cfg, int(round(0.5 * (budget.fps or 25.0))), budget.fps)
-                elif len(seen) == 1:
-                    tracker.set_step(kf_tracker, cfg, idx - seen[0], budget.fps)
+                else:
+                    tracker.set_step(kf_tracker, cfg, idx - seen[-1], budget.fps)
                 for r in tracker.update(kf_tracker, det):
                     rows.append(make_row(idx, t_sec, int(r[4]), int(r[6]), float(r[5]),
                                          float(r[0]), float(r[1]), float(r[2]), float(r[3])))
                 last_t = t_sec
                 seen.append(idx)
                 processed += 1
-                if processed % _BUDGET_CHECK_EVERY == 0 and (
-                        budget.should_stop() or _project_by_position(idx)):
-                    break
+                if dense and processed % _BUDGET_CHECK_EVERY == 0 and \
+                        budget.project_overrun(idx + 1, budget.n_frames, loop_t0):
+                    av_reader.set_skip_frame(cfg.skip_frame)
+                    dense = False
+                    downgraded_at = len(seen)
+                    decoder_used += f"->{cfg.skip_frame}@{t_sec:.0f}s"
+                    budget.note("density", 0.0, f"dense pass projected past "
+                                f"{budget.part_a_hard:.0f}s at {t_sec:.0f}s; keyframes from here")
+            # Never stopped, so it saw the whole video.
+            baseline_finished = True
         elif ff_reader is not None:
             # Every source frame arrives already scaled; unlike cv2 grab-only
             # skip, a frame we do not process still cost a decode+scale+pipe
@@ -423,8 +441,11 @@ def run_perception(video_path: str | Path,
 
     if len(seen) >= 2:
         # The sample step actually achieved (the GOP for NONKEY). Rules use it
-        # as "how much time one sample covers".
-        stride = max(1, int(np.median(np.diff(seen))))
+        # as "how much time one sample covers" and to decide whether direction
+        # can be trusted, so a pass that dropped back to keyframes reports the
+        # keyframe step: part of it was sampled that sparsely.
+        gaps = np.diff(seen)
+        stride = max(1, int(gaps.max() if downgraded_at else np.median(gaps)))
 
     data = (np.vstack(rows).astype(np.float32) if rows
             else np.zeros((0, len(COLUMNS)), dtype=np.float32))
@@ -435,7 +456,7 @@ def run_perception(video_path: str | Path,
         data=data, fps=budget.fps, duration=budget.duration,
         n_frames=budget.n_frames, width=width, height=height,
         frame_stride=stride,
-        complete=budget.stop_reason is None,
+        complete=baseline_finished or budget.stop_reason is None,
         processed_until_sec=last_t,
         pose=pose.to_dict(),
     )

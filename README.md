@@ -780,3 +780,26 @@ pedestrian stands at the one-body-height kerb margin; CP3 fired on samples
 alternating pass/fail, and at 2 samples/s only two isolated samples pass. The
 new sample_002 event is a person 1.74 s outside the zebra margin in CP3,
 under the 2 s minimum; four keyframe samples count as 2.0 s.
+
+### Budget policy (`src/budget.py`)
+
+1. **The keyframe baseline always runs to completion**, with alignment inside
+   it. Part B is the default RiskEstimator, which scores the same whether or
+   not the video is wiped, so a Part A starved to zero and a wiped video both
+   score nothing: finishing the baseline is never worse. It costs ~0.1-0.3x
+   realtime on the 4K clips, plus inference.
+2. **The Part B probe buys only optional density.** It is now the median of
+   three short probes at 10%, 50% and 85% of the file (each seeks, reads one
+   frame untimed, then times plain `cap.read()`), not one probe from frame 0.
+   `Budget.headroom_x()` is what the measured Part B (x1.3 safety) leaves;
+   with at least `dense_min_headroom_x` (1.0x) of it, Stage 1 decodes
+   `NONREF` (I+P, one frame every 0.1 s on these clips), which is dense
+   enough for wrong_way and congestion. If the dense pass projects past
+   `part_a_hard` it drops back to keyframes at the next keyframe and finishes
+   there, and the table reports the keyframe step so the direction rules stay
+   off. No measurement, no density: it is never bought on the fixed fallback.
+3. **Lighter clips use the headroom automatically**: a 1080p or lower-bitrate
+   clip measures a cheaper Part B and gets the dense pass; the 4K test clips
+   on the 8-core box do not (Part B alone measures ~2.3-2.5x).
+4. The cv2 fallback (no PyAV) still stops at `part_a_hard`: it decodes every
+   frame and could not finish.

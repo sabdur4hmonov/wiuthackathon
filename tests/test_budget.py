@@ -269,12 +269,16 @@ def test_measure_part_b_floor_on_a_real_small_clip(tmp_path):
         w.write(np.zeros((48, 64, 3), dtype=np.uint8))
     w.release()
 
-    estimate, probe_wall = measure_part_b_floor(p, n_frames=60, n_probe=20)
+    rates = []
+    estimate, probe_wall = measure_part_b_floor(p, n_frames=60, n_probe=21,
+                                                rates_out=rates)
     assert estimate is not None
     assert estimate > 0.0
     assert probe_wall > 0.0
-    # 60 real frames at roughly the per-frame rate measured over 20 samples.
-    assert estimate == pytest.approx(probe_wall / 20 * 60, rel=0.5)
+    # Three probes at different positions; the estimate is their MEDIAN rate
+    # over the whole clip, so one slow stretch cannot decide the budget.
+    assert len(rates) == 3
+    assert estimate == pytest.approx(float(np.median(rates)) * 60)
 
 
 def test_measure_part_b_floor_bounds_its_own_wall_time(tmp_path):

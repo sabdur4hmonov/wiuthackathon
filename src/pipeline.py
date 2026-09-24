@@ -79,17 +79,20 @@ def _calibrate_part_b_reserve(video_path: str, budget: Budget,
     max_probe_sec = min(cfg.part_b_probe_max_sec,
                         cfg.part_b_probe_max_frac * budget.total_budget)
     try:
+        rates: list[float] = []
         with budget.stage("part_b_probe"):
             estimate, probe_wall = measure_part_b_floor(
                 video_path, budget.n_frames,
                 n_probe=cfg.part_b_probe_frames,
                 max_probe_sec=max_probe_sec,
+                rates_out=rates,
             )
         if estimate is not None:
             budget.set_measured_part_b(estimate)
             budget.note("part_b_probe", 0.0,
                        f"measured {estimate:.1f}s for Part B "
-                       f"({probe_wall * 1000:.0f}ms probe -> "
+                       f"({probe_wall * 1000:.0f}ms, median of "
+                       f"{'/'.join(f'{r * 1000:.0f}' for r in rates)} ms/frame -> "
                        f"{estimate / max(budget.duration, 1e-9):.3f}x realtime)")
             if verbose:
                 print(f"[budget] Part B reserve calibrated from a real probe: "
