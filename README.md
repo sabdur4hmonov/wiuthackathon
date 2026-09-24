@@ -6,8 +6,18 @@ stopped vehicle, wrong way, congestion) as `[start, end, label]` segments;
 organizers' harness (`run_submission.py`, `evaluate.py`, both unchanged) and
 its 3x-realtime budget for Part A + Part B together, offline.
 
-**Team:** `<TEAM NAME>` — `<name 1>` (`<role / what they did>`),
-`<name 2>` (`<role>`), `<name 3>` (`<role>`). Website: `<URL>`.
+**Team:** `<TEAM NAME>`
+
+- **Sardorbek Abdurahmonov** (team leader) — [GitHub](https://github.com/sabdur4hmonov) ·
+  [LinkedIn](https://www.linkedin.com/in/sardorbek-abdurahmonov)
+- **Humoyun Ehsanov** — [LinkedIn](https://www.linkedin.com/in/humoyun-eksanov-b2ba85346)
+- **Sodiqov Muhammadaziz** — [LinkedIn](https://uz.linkedin.com/in/muhammadaziz-sodiqov-08a01535b)
+
+**Who did what:** the project was built with AI assistance under Sardorbek
+Abdurahmonov's direction: he directed it end to end (pipeline and website),
+reviewed the results and labelled the sample clips.
+
+Website: `<team website's final live URL>`
 Live demo: https://wiuthackathon-gerwwm75st8xkhkapprvc79.streamlit.app -- upload a clip (up to 120 s / 200 MB) and get events, an annotated playback and the risk curve (Streamlit Community Cloud, CPU; see [demo/README.md](demo/README.md)).
 
 ---
