@@ -192,8 +192,11 @@ def render_proxy(video: Path, out_mp4: Path) -> None:
         o.width, o.height, o.pix_fmt = w, h, "yuv420p"
         o.options = {"crf": "28", "preset": "veryfast"}
         for f in src.decode(s):
-            g = f.reformat(width=w, height=h, format="yuv420p", interpolation="AREA")
-            g.pts = None
+            # A fresh frame: one reformatted from the source keeps the
+            # source's pts/time_base, which the muxer rejects.
+            g = av.VideoFrame.from_ndarray(
+                f.reformat(width=w, height=h, format="yuv420p", interpolation="AREA").to_ndarray(),
+                format="yuv420p")
             for pkt in o.encode(g):
                 dst.mux(pkt)
         for pkt in o.encode():
