@@ -1,0 +1,79 @@
+{
+ "sample_001.mp4": {
+  "duration": 340.34,
+  "fps": 29.97,
+  "events": [
+   [
+    110.377,
+    115.916,
+    "jaywalking"
+   ]
+  ],
+  "approximate": true,
+  "source": "CP3 full-rate rule output (stride 2), eyeballed on a thumbnail montage; the sample_002 02:51 moped-rider detection was rejected. Only jaywalking was ever looked at: other classes are UNLABELLED, not absent."
+ },
+ "sample_002.mp4": {
+  "duration": 317.817,
+  "fps": 29.97,
+  "events": [
+   [
+    78.345,
+    84.551,
+    "jaywalking"
+   ],
+   [
+    139.673,
+    142.943,
+    "jaywalking"
+   ]
+  ],
+  "approximate": true,
+  "source": "CP3 full-rate rule output (stride 2), eyeballed on a thumbnail montage; the sample_002 02:51 moped-rider detection was rejected. Only jaywalking was ever looked at: other classes are UNLABELLED, not absent."
+ },
+ "sample_003.mp4": {
+  "duration": 317.817,
+  "fps": 29.97,
+  "events": [
+   [
+    87.087,
+    94.828,
+    "jaywalking"
+   ],
+   [
+    171.905,
+    174.841,
+    "jaywalking"
+   ],
+   [
+    180.981,
+    185.385,
+    "jaywalking"
+   ],
+   [
+    259.126,
+    261.995,
+    "jaywalking"
+   ]
+  ],
+  "approximate": true,
+  "source": "CP3 full-rate rule output (stride 2), eyeballed on a thumbnail montage; the sample_002 02:51 moped-rider detection was rejected. Only jaywalking was ever looked at: other classes are UNLABELLED, not absent."
+ },
+ "sample_004.mp4": {
+  "duration": 127.627,
+  "fps": 29.97,
+  "events": [
+   [
+    19.086,
+    24.625,
+    "jaywalking"
+   ],
+   [
+    26.159,
+    34.835,
+    "jaywalking"
+   ]
+  ],
+  "approximate": true,
+  "source": "CP3 full-rate rule output (stride 2), eyeballed on a thumbnail montage; the sample_002 02:51 moped-rider detection was rejected. Only jaywalking was ever looked at: other classes are UNLABELLED, not absent."
+ }
+}

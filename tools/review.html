@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<!--
+  Candidate review: confirm, reject or correct each candidate event, add the
+  ones the pipeline missed, export ground_truth.json for evaluate.py.
+
+  Generated next to data.js and media/ by tools/review_candidates.py; open
+  index.html straight from disk. Decisions autosave in this browser.
+
+  Keys:  J / K next / previous   Y confirm   N reject   F fix (edit fields)
+         Space play / pause      [ / ] set start / end to the video's time
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Candidate Review</title>
+<style>
+  :root { --bg:#f6f7f9; --panel:#fff; --line:#dde1e8; --fg:#1b1f27; --mut:#5d6778;
+          --accent:#2f6fed; --ok:#1f9d63; --bad:#d64545; --warn:#b7791f; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg:#0f1117; --panel:#171a23; --line:#2a2f3c; --fg:#e7eaf3;
+      --mut:#98a1b8; --accent:#5b9cff; --ok:#3ecf8e; --bad:#ff6b6b; --warn:#ffb648; }
+  }
+  :root[data-theme="dark"] { --bg:#0f1117; --panel:#171a23; --line:#2a2f3c; --fg:#e7eaf3;
+    --mut:#98a1b8; --accent:#5b9cff; --ok:#3ecf8e; --bad:#ff6b6b; --warn:#ffb648; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { position:sticky; top:0; z-index:2; background:var(--panel); border-bottom:1px solid var(--line);
+           padding:10px 16px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0 8px 0 0; }
+  .bar { flex:1; min-width:160px; height:8px; background:var(--line); border-radius:4px; overflow:hidden; }
+  .bar > div { height:100%; background:var(--ok); width:0; }
+  button, select, input { font:inherit; color:var(--fg); background:var(--panel);
+         border:1px solid var(--line); border-radius:6px; padding:5px 10px; }
+  button { cursor:pointer; } button:hover { border-color:var(--accent); }
+  button.ok { border-color:var(--ok); } button.bad { border-color:var(--bad); }
+  main { max-width:1100px; margin:0 auto; padding:16px; }
+  .clip { margin:22px 0 8px; font-weight:600; display:flex; gap:10px; align-items:baseline; flex-wrap:wrap; }
+  .clip small { color:var(--mut); font-weight:400; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px;
+          margin:10px 0; display:grid; grid-template-columns:minmax(0,1.6fr) minmax(0,1fr); gap:14px; }
+  .card.cur { outline:2px solid var(--accent); }
+  .card.yes { border-left:6px solid var(--ok); } .card.no { border-left:6px solid var(--bad); opacity:.7; }
+  .card.fix { border-left:6px solid var(--warn); }
+  video { width:100%; border-radius:6px; background:#000; }
+  .meta { color:var(--mut); font-size:13px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:8px 0; }
+  .row input[type=number] { width:96px; }
+  .tag { font-size:12px; padding:1px 7px; border-radius:10px; border:1px solid var(--line); color:var(--mut); }
+  .tag.probe { border-color:var(--warn); color:var(--warn); }
+  textarea { width:100%; font:inherit; color:var(--fg); background:var(--bg); border:1px solid var(--line);
+             border-radius:6px; padding:6px; min-height:38px; }
+  .add { background:var(--panel); border:1px dashed var(--line); border-radius:10px; padding:10px 12px; }
+  .help { color:var(--mut); font-size:13px; }
+  @media (max-width: 760px) { .card { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Candidate review</h1>
+  <span id="count" class="meta"></span>
+  <div class="bar"><div id="progress"></div></div>
+  <button id="export" class="ok">Export ground_truth.json</button>
+  <label class="meta">Import <input id="import" type="file" accept=".json"></label>
+  <button id="reset" class="bad" title="Forget every decision in this browser">Reset</button>
+</header>
+<main>
+  <p class="help">For each candidate: watch the clip (the source time is burned in, top left), then
+  <b>Y</b> if it is a real event with roughly right bounds, <b>N</b> if it is not, or edit start / end /
+  class and press <b>F</b>. tIoU 0.7 is strict: set bounds to where the behaviour starts and stops.
+  <b>[</b> / <b>]</b> copy the playing video's time into start / end. "recall probe" candidates are
+  near misses the pipeline did NOT report; confirming one marks a miss. Add anything else you
+  saw with "Add a missed event". Unreviewed candidates are left out of the export.</p>
+  <div id="list"></div>
+</main>
+<script src="data.js"></script>
+<script>
+const CLASSES = ["accident","near_miss","red_light","wrong_way","illegal_u_turn","stopped_vehicle",
+  "jaywalking","failure_to_yield","illegal_turn","solid_line_crossing","stop_line","congestion",
+  "road_obstacle","fire_smoke"];
+const KEY = "wiut-review-v1";
+const R = window.REVIEW || {clips:{}, candidates:[]};
+let state = {decisions:{}, added:[]};
+try { const s = JSON.parse(localStorage.getItem(KEY) || "null"); if (s) state = s; } catch (e) {}
+function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
+let cur = 0;
+
+function el(tag, attrs = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") e.className = v; else if (k.startsWith("on")) e[k] = v; else e.setAttribute(k, v);
+  }
+  for (const k of kids) e.append(k);
+  return e;
+}
+function classSelect(value) {
+  const s = el("select");
+  for (const c of CLASSES) { const o = el("option", {value:c}, c); if (c === value) o.selected = true; s.append(o); }
+  return s;
+}
+function mmss(t) { const m = Math.floor(t / 60); return `${m}:${(t - 60 * m).toFixed(1).padStart(4, "0")}`; }
+
+function render() {
+  const list = document.getElementById("list");
+  list.textContent = "";
+  let i = 0;
+  for (const [clip, info] of Object.entries(R.clips)) {
+    const head = el("div", {class:"clip"}, clip, el("small", {}, `${mmss(info.duration)} · ${info.fps} fps`));
+    if (info.proxy) head.append(el("a", {href:info.proxy, target:"_blank", class:"meta"}, "full-length proxy"));
+    list.append(head);
+    for (const c of R.candidates.filter(c => c.clip === clip)) list.append(card(c, i++));
+    list.append(addForm(clip));
+    for (const a of state.added.filter(a => a.clip === clip)) {
+      list.append(el("div", {class:"meta"}, `added: ${a.label} ${a.start}–${a.end} s `,
+        el("button", {onclick:() => { state.added.splice(state.added.indexOf(a), 1); save(); render(); }}, "remove")));
+    }
+  }
+  progress();
+  focusCard(cur, false);
+}
+
+function card(c, idx) {
+  const d = state.decisions[c.id] || {};
+  const box = el("div", {class:"card " + (d.verdict || ""), "data-idx":idx, "data-id":c.id});
+  const vid = el("video", {src:c.video, poster:c.thumb, controls:"", loop:"", muted:"", preload:"none"});
+  vid.muted = true;
+  const s = el("input", {type:"number", step:"0.1", value:(d.start ?? c.start)});
+  const e = el("input", {type:"number", step:"0.1", value:(d.end ?? c.end)});
+  const lab = classSelect(d.label ?? c.label);
+  const note = el("textarea", {placeholder:"note (optional)"}); note.value = d.note || "";
+  const decide = v => { state.decisions[c.id] = {verdict:v, start:+s.value, end:+e.value,
+                          label:lab.value, note:note.value}; save(); render(); };
+  box._decide = decide;
+  box._setStart = () => { s.value = (c.window_start + vid.currentTime).toFixed(2); };
+  box._setEnd = () => { e.value = (c.window_start + vid.currentTime).toFixed(2); };
+  box._video = vid;
+  const tags = el("div", {class:"row"});
+  for (const src of c.sources) tags.append(el("span", {class:"tag" + (src === "recall probe" ? " probe" : "")}, src));
+  box.append(vid, el("div", {},
+    el("div", {}, el("b", {}, c.label), ` ${mmss(c.start)} – ${mmss(c.end)}`,
+       el("span", {class:"meta"}, `  (${(c.end - c.start).toFixed(1)} s)`)),
+    tags,
+    el("div", {class:"row"}, "start", s, el("button", {onclick:box._setStart, title:"["}, "← now")),
+    el("div", {class:"row"}, "end", e, el("button", {onclick:box._setEnd, title:"]"}, "← now")),
+    el("div", {class:"row"}, "class", lab),
+    note,
+    el("div", {class:"row"},
+      el("button", {class:"ok", onclick:() => decide("yes")}, "Y correct"),
+      el("button", {class:"bad", onclick:() => decide("no")}, "N reject"),
+      el("button", {onclick:() => decide("fix")}, "F fixed")),
+    el("div", {class:"meta"}, d.verdict ? `decided: ${d.verdict}` : "not reviewed")));
+  box.onclick = () => { cur = idx; focusCard(cur, false); };
+  return box;
+}
+
+function addForm(clip) {
+  const s = el("input", {type:"number", step:"0.1", placeholder:"start s"});
+  const e = el("input", {type:"number", step:"0.1", placeholder:"end s"});
+  const lab = classSelect("jaywalking");
+  return el("div", {class:"add row"}, "Add a missed event:", s, e, lab,
+    el("button", {onclick:() => {
+      if (!(+e.value > +s.value)) { alert("end must be after start"); return; }
+      state.added.push({clip, start:+s.value, end:+e.value, label:lab.value}); save(); render(); }}, "add"));
+}
+
+function progress() {
+  const n = R.candidates.length, done = R.candidates.filter(c => state.decisions[c.id]).length;
+  document.getElementById("count").textContent = `${done} / ${n} reviewed · ${state.added.length} added`;
+  document.getElementById("progress").style.width = n ? `${100 * done / n}%` : "0";
+}
+
+function focusCard(i, scroll = true) {
+  const cards = [...document.querySelectorAll(".card")];
+  cards.forEach(c => c.classList.remove("cur"));
+  if (!cards.length) return;
+  cur = Math.max(0, Math.min(cards.length - 1, i));
+  cards[cur].classList.add("cur");
+  if (scroll) cards[cur].scrollIntoView({block:"center", behavior:"smooth"});
+}
+
+function exportGT() {
+  const out = {};
+  for (const [clip, info] of Object.entries(R.clips))
+    out[clip] = {duration:info.duration, fps:info.fps, events:[], approximate:false,
+                 source:"tools/review.html: pipeline + seed candidates confirmed or corrected by a person, plus added misses"};
+  for (const c of R.candidates) {
+    const d = state.decisions[c.id];
+    if (d && (d.verdict === "yes" || d.verdict === "fix") && d.end > d.start)
+      out[c.clip].events.push([d.start, d.end, d.label]);
+  }
+  for (const a of state.added) out[a.clip].events.push([a.start, a.end, a.label]);
+  // evaluate.py: same-class segments in one video must not overlap -> merge them.
+  for (const v of Object.values(out)) {
+    v.events.sort((a, b) => a[2].localeCompare(b[2]) || a[0] - b[0]);
+    const merged = [];
+    for (const ev of v.events) {
+      const last = merged[merged.length - 1];
+      if (last && last[2] === ev[2] && ev[0] < last[1]) last[1] = Math.max(last[1], ev[1]);
+      else merged.push([...ev]);
+    }
+    v.events = merged.map(([s, e, l]) => [+s.toFixed(3), +e.toFixed(3), l]);
+  }
+  const missing = R.candidates.length - R.candidates.filter(c => state.decisions[c.id]).length;
+  if (missing && !confirm(`${missing} candidate(s) not reviewed will be left out. Export anyway?`)) return;
+  const blob = new Blob([JSON.stringify(out, null, 1)], {type:"application/json"});
+  const a = el("a", {href:URL.createObjectURL(blob), download:"ground_truth.json"});
+  document.body.append(a); a.click(); a.remove();
+}
+
+document.getElementById("export").onclick = exportGT;
+document.getElementById("reset").onclick = () => {
+  if (confirm("Forget every decision in this browser?")) { state = {decisions:{}, added:[]}; save(); render(); }
+};
+document.getElementById("import").onchange = async ev => {
+  // Resume from an exported ground_truth.json: its events become "yes" decisions
+  // on the candidates they overlap; the rest become added events.
+  const gt = JSON.parse(await ev.target.files[0].text());
+  for (const [clip, v] of Object.entries(gt)) for (const [s, e, l] of v.events || []) {
+    const c = R.candidates.find(c => c.clip === clip && c.label === l && Math.min(c.end, e) > Math.max(c.start, s));
+    if (c) state.decisions[c.id] = {verdict:"yes", start:s, end:e, label:l, note:""};
+    else state.added.push({clip, start:s, end:e, label:l});
+  }
+  save(); render();
+};
+document.addEventListener("keydown", ev => {
+  if (["INPUT", "TEXTAREA", "SELECT"].includes(ev.target.tagName)) return;
+  const cards = [...document.querySelectorAll(".card")], c = cards[cur];
+  const k = ev.key.toLowerCase();
+  if (k === "j") focusCard(cur + 1);
+  else if (k === "k") focusCard(cur - 1);
+  else if (!c) return;
+  else if (k === "y") { c._decide("yes"); focusCard(cur + 1); }
+  else if (k === "n") { c._decide("no"); focusCard(cur + 1); }
+  else if (k === "f") { c._decide("fix"); focusCard(cur + 1); }
+  else if (k === "[") c._setStart();
+  else if (k === "]") c._setEnd();
+  else if (k === " ") { ev.preventDefault(); const v = c._video; v.paused ? v.play() : v.pause(); }
+  else return;
+});
+render();
+</script>
+</body>
+</html>

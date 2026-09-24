@@ -30,3 +30,6 @@ check*.png
 # Website build products
 /web/node_modules/
 /web/dist/
+
+# Generated review clips/proxies (tools/review_candidates.py)
+/labels/review/
