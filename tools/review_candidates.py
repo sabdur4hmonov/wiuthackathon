@@ -235,7 +235,11 @@ def main() -> int:
             px = media / f"{video.stem}_proxy.mp4"
             if not px.exists():
                 print(f"   proxy {px.name} ...", flush=True)
-                render_proxy(video, px)
+                # Written aside and renamed on success: a crashed run must not
+                # leave a truncated proxy that the next run would reuse.
+                tmp = px.with_name(px.stem + ".partial.mp4")
+                render_proxy(video, tmp)
+                tmp.replace(px)
             clips[video.name]["proxy"] = f"media/{px.name}"
 
     data = {"clips": clips, "candidates": cands}
