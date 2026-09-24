@@ -40,6 +40,22 @@ pip install -r demo/requirements.txt
 python demo/app.py            # http://127.0.0.1:7860
 ```
 
+## Hosting: what Hugging Face allows (checked 2026-09-24)
+
+Creating the Space failed both ways on a free account (402 Payment Required):
+* **CPU basic**: "hosting Gradio and Docker Spaces on free cpu-basic requires
+  a PRO subscription";
+* **ZeroGPU**: "You must be subscribed to PRO to host Spaces with ZeroGPU. If
+  you recently created your account, please wait 30 days or request a
+  community grant."
+
+The app is ready for ZeroGPU: `spaces` is imported first, the detector-heavy
+part (`detect()`: Stage 1 + rules + the risk pass) is decorated with
+`@spaces.GPU(duration=120)` and returns plain data; locally, and on CPU
+hardware, the decorator is a no-op. `deploy.py --hardware zero-a10g` is the
+default; `--hardware cpu-basic` for a PRO CPU Space (then add the CPU torch
+index to requirements.txt for a smaller image).
+
 ## Deploy to Hugging Face
 
 ```bash

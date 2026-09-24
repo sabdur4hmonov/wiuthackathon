@@ -48,6 +48,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("space", help="<user-or-org>/<space-name>")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--hardware", default="zero-a10g",
+                    help="Space hardware: zero-a10g (ZeroGPU; needs PRO or a community grant) or cpu-basic")
     args = ap.parse_args()
     build = stage()
     size = sum(f.stat().st_size for f in build.rglob("*") if f.is_file())
@@ -61,7 +63,8 @@ def main() -> int:
     from huggingface_hub import HfApi
 
     api = HfApi(token=token)
-    api.create_repo(args.space, repo_type="space", space_sdk="gradio", exist_ok=True)
+    api.create_repo(args.space, repo_type="space", space_sdk="gradio", space_hardware=args.hardware,
+                    exist_ok=True)
     api.upload_folder(folder_path=str(build), repo_id=args.space, repo_type="space",
                       commit_message="Deploy the WIUT traffic demo")
     print(f"uploaded: https://huggingface.co/spaces/{args.space}")

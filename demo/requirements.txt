@@ -1,5 +1,6 @@
-# Hugging Face Space (CPU). The CPU torch wheel keeps the image small.
---extra-index-url https://download.pytorch.org/whl/cpu
+# Hugging Face Space on ZeroGPU: the default (CUDA) torch wheel from PyPI.
+# (For CPU hardware, add --extra-index-url https://download.pytorch.org/whl/cpu
+# to get the much smaller CPU wheel.)
 torch>=2.2
 torchvision>=0.17
 ultralytics>=8.3.0
@@ -10,3 +11,4 @@ numpy>=1.24
 scipy>=1.11
 matplotlib>=3.7
 gradio>=4.44
+spaces            # ZeroGPU decorator; harmless on CPU hardware

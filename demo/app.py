@@ -30,6 +30,16 @@ sys.path.insert(0, str(ROOT))
 
 import numpy as np  # noqa: E402
 
+try:                                     # Hugging Face ZeroGPU: must be imported before CUDA is touched
+    import spaces  # type: ignore
+
+    GPU = spaces.GPU
+except Exception:  # noqa: BLE001 - local runs / CPU hardware: a no-op decorator
+    def GPU(*args, **kwargs):
+        if args and callable(args[0]) and len(args) == 1 and not kwargs:
+            return args[0]
+        return lambda fn: fn
+
 MAX_SEC = 120.0
 MAX_MB = 200
 OUT_WIDTH = 960
@@ -145,6 +155,16 @@ def run_part_b(path: str, fps: float, n: int, log) -> list[list[float]]:
     finally:
         cap.release()
     return curve
+
+
+@GPU(duration=120)
+def detect(path: str, fps: float, n: int):
+    """The detector-heavy part -- Stage 1 + rules, and the risk pass -- in one
+    call, so a ZeroGPU Space holds the GPU once per upload. Everything it
+    returns is plain data (ZeroGPU runs it in a worker process); progress
+    messages stay outside, in analyse()."""
+    quiet = lambda m: None  # noqa: E731
+    return run_part_a(path, quiet), run_part_b(path, fps, n, quiet)
 
 
 def _draw_frame(img, t, tracks, zones, events, risk_at, scale):
@@ -279,8 +299,8 @@ def analyse(path: str, log=print) -> dict:
     dur, fps, n, w, h = probe(path)
     log(f"{dur:.1f} s at {fps:.2f} fps, {w}x{h}.")
     out_dir = Path(tempfile.mkdtemp(prefix="wiut_demo_"))
-    part_a = run_part_a(path, log)
-    curve = run_part_b(path, fps, n, log)
+    log("Detecting, tracking, scoring risk ...")
+    part_a, curve = detect(path, fps, n)
     video, clips = render(path, out_dir, part_a, curve, fps, log)
     result = {"video": Path(path).name, "duration_sec": round(dur, 2), "fps": round(fps, 3),
               "events": part_a["events"], "risk": curve, "note": part_a["note"],
