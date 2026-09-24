@@ -49,6 +49,7 @@ import numpy as np
 from . import align, avdecode, tracker
 from .budget import Budget
 from .config import CFG, WEIGHTS_DIR, PerceptionConfig, enforce_offline, seed_everything
+from .yolo import _disable_amp_check, _fp16_kwarg, device_string  # noqa: F401
 from .ffdecode import FFmpegFrameReader, FFmpegUnavailable, scaled_size
 from .tracks import COL, COLUMNS, TrackTable, compute_kinematics, make_row
 
@@ -57,6 +58,12 @@ _MODEL_KEY: tuple | None = None
 # Budget is checked every this many PROCESSED frames. Cheap, but not free, and
 # checking every frame would show up in the per-frame cost we are protecting.
 _BUDGET_CHECK_EVERY = 10
+# Keyframes further apart than this are too sparse to track on (the test
+# camera: 0.5 s). Such files are decoded in full and sampled every
+# LONG_GOP_SAMPLE_SEC instead. Module constants, not PerceptionConfig fields:
+# they do not change the tracks of any file the cache already holds.
+LONG_GOP_SEC = 1.0
+LONG_GOP_SAMPLE_SEC = 0.5
 
 
 class PerceptionUnavailable(RuntimeError):
@@ -100,30 +107,6 @@ def load_model(cfg: PerceptionConfig | None = None):
     return model
 
 
-def _disable_amp_check(model) -> None:
-    """Stop Ultralytics' AMP self-check, which downloads yolo11n.pt.
-
-    The check runs on the first CUDA inference and fetches a nano checkpoint to
-    compare fp16 and fp32 outputs. With no internet that is at best a long
-    timeout and at worst an exception inside detect_events -- i.e. an empty
-    prediction for the video. We pin the flag on every object that owns one.
-    """
-    for obj in (model, getattr(model, "model", None), getattr(model, "predictor", None)):
-        if obj is None:
-            continue
-        for attr in ("amp", "_amp_checked"):
-            try:
-                setattr(obj, attr, False if attr == "amp" else True)
-            except Exception:
-                pass
-    try:
-        args = getattr(getattr(model, "model", None), "args", None)
-        if isinstance(args, dict):
-            args["amp"] = False
-    except Exception:
-        pass
-
-
 def build_track_kwargs(cfg: PerceptionConfig, device: str) -> dict:
     """Arguments for model.track(), assembled once per video.
 
@@ -147,17 +130,6 @@ def build_track_kwargs(cfg: PerceptionConfig, device: str) -> dict:
     return kwargs
 
 
-def _fp16_kwarg() -> dict:
-    try:
-        from ultralytics.cfg import DEFAULT_CFG_DICT
-
-        if "quantize" in DEFAULT_CFG_DICT:
-            return {"quantize": 16}
-    except Exception:  # noqa: BLE001 - fall back to the old name
-        pass
-    return {"half": True}
-
-
 def build_predict_kwargs(cfg: PerceptionConfig, device: str) -> dict:
     """Arguments for model.predict() on the keyframe path: detection only,
     tracking is done by src/tracker.py."""
@@ -175,16 +147,6 @@ def _detections(res, sx: float, sy: float) -> "tracker.Detections":
         return tracker.Detections(np.zeros((0, 4)), np.zeros(0), np.zeros(0))
     xyxy = boxes.xyxy.cpu().numpy() * np.array([sx, sy, sx, sy], dtype=np.float32)
     return tracker.Detections(xyxy, boxes.conf.cpu().numpy(), boxes.cls.cpu().numpy())
-
-
-def device_string() -> str:
-    """'0' for the first CUDA device, else 'cpu'. Reported in the timing log."""
-    try:
-        import torch
-
-        return "0" if torch.cuda.is_available() else "cpu"
-    except Exception:
-        return "cpu"
 
 
 # ---------------------------------------------------------------------------
@@ -367,16 +329,34 @@ def run_perception(video_path: str | Path,
             # with a motion-tolerant association. Stock ByteTrack (model.track)
             # cannot link a walking pedestrian across 0.5 s.
             headroom = budget.headroom_x()
-            dense = (headroom is not None
+            fps_ = budget.fps or 25.0
+            gap = av_reader.keyframe_gap
+            # LONG GOP (most re-encoded or phone footage: x264 puts a keyframe
+            # every ~250 frames, 8 s): keyframes alone are far too sparse to
+            # track on. Decode every frame instead and convert + detect one per
+            # LONG_GOP_SAMPLE_SEC -- the same sample rate as the camera's
+            # keyframes. A full decode is NOT cheap, so this mode keeps the
+            # budget stop the keyframe baseline does without.
+            long_gop = gap is None or gap / fps_ > LONG_GOP_SEC
+            dense = (not long_gop and headroom is not None
                      and headroom >= budget.cfg.dense_min_headroom_x
                      and cfg.skip_frame != budget.cfg.dense_skip_frame)
-            if dense:
-                av_reader.set_skip_frame(budget.cfg.dense_skip_frame)
-                decoder_used = f"pyav/{budget.cfg.dense_skip_frame}"
-            budget.note("density", 0.0,
-                        f"{'dense ' + budget.cfg.dense_skip_frame if dense else 'keyframes only'}"
-                        f" (headroom {'n/a' if headroom is None else f'{headroom:.2f}x'},"
-                        f" dense needs {budget.cfg.dense_min_headroom_x:.2f}x)")
+            if long_gop:
+                av_reader.set_skip_frame("DEFAULT")
+                av_reader.min_step = max(1, int(round(LONG_GOP_SAMPLE_SEC * fps_)))
+                decoder_used = f"pyav/every-frame, sample 1/{av_reader.min_step}"
+                budget.note("density", 0.0,
+                            f"long GOP ({'<2 keyframes in 300 packets' if gap is None else f'{gap} frames'}): "
+                            f"decoding every frame, detecting 1 in {av_reader.min_step}, budget stop on")
+            else:
+                if dense:
+                    av_reader.set_skip_frame(budget.cfg.dense_skip_frame)
+                    decoder_used = f"pyav/{budget.cfg.dense_skip_frame}"
+                budget.note("density", 0.0,
+                            f"{'dense ' + budget.cfg.dense_skip_frame if dense else 'keyframes only'}"
+                            f" (keyframes {gap} frames apart; headroom "
+                            f"{'n/a' if headroom is None else f'{headroom:.2f}x'},"
+                            f" dense needs {budget.cfg.dense_min_headroom_x:.2f}x)")
             predict_kwargs = build_predict_kwargs(cfg, device)
             kf_tracker = None
             for idx, frame in av_reader.frames():
@@ -395,6 +375,12 @@ def run_perception(video_path: str | Path,
                 last_t = t_sec
                 seen.append(idx)
                 processed += 1
+                if long_gop and processed % _BUDGET_CHECK_EVERY == 0 and (
+                        budget.should_stop()
+                        or budget.project_overrun(idx + 1, budget.n_frames, loop_t0)):
+                    budget.force_stop(budget.stop_reason or
+                                      f"long-GOP full decode projected past {budget.part_a_hard:.0f}s")
+                    break
                 if dense and processed % _BUDGET_CHECK_EVERY == 0 and \
                         budget.project_overrun(idx + 1, budget.n_frames, loop_t0):
                     av_reader.set_skip_frame(cfg.skip_frame)
@@ -403,8 +389,9 @@ def run_perception(video_path: str | Path,
                     decoder_used += f"->{cfg.skip_frame}@{t_sec:.0f}s"
                     budget.note("density", 0.0, f"dense pass projected past "
                                 f"{budget.part_a_hard:.0f}s at {t_sec:.0f}s; keyframes from here")
-            # Never stopped, so it saw the whole video.
-            baseline_finished = True
+            # The keyframe baseline is never stopped, so it saw the whole
+            # video; the long-GOP mode can be, and then it did not.
+            baseline_finished = not (long_gop and budget.stop_reason)
         elif ff_reader is not None:
             # Every source frame arrives already scaled; unlike cv2 grab-only
             # skip, a frame we do not process still cost a decode+scale+pipe

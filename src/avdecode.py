@@ -75,8 +75,9 @@ class KeyframeReader:
                  target_width: int = 960):
         if av is None:
             raise AVUnavailable("PyAV is not installed")
+        self._path = str(path)
         try:
-            self._c = av.open(str(path))
+            self._c = av.open(self._path)
         except Exception as e:  # noqa: BLE001
             raise AVUnavailable(f"cannot open {path}: {e}") from e
         try:
@@ -86,6 +87,7 @@ class KeyframeReader:
             raise AVUnavailable(f"no video stream in {path}: {e}") from e
         self._s.thread_type = "SLICE"          # NOT "AUTO": see module docstring
         self._s.codec_context.skip_frame = skip_frame
+        self._skip = skip_frame
         self.fps = float(fps) if fps else float(self._s.average_rate or 25.0)
         self.native_width = int(self._s.codec_context.width)
         self.native_height = int(self._s.codec_context.height)
@@ -93,6 +95,39 @@ class KeyframeReader:
                                               target_width)
         self._tb = float(self._s.time_base)
         self._start = self._s.start_time or 0
+        # Convert (and yield) at most one frame per min_step source frames.
+        # 0 = every decoded frame. Used for long-GOP files, where Stage 1
+        # decodes everything but only wants a sample every ~0.5 s.
+        self.min_step = 0
+        self._last_yield = None
+        self.keyframe_gap = self._probe_keyframe_gap()
+
+    def _probe_keyframe_gap(self, max_packets: int = 300) -> int | None:
+        """Frames between the first two keyframes, from packet flags only (no
+        decoding), or None when the first max_packets hold fewer than two.
+        Seeks back to the start afterwards."""
+        keys, n = [], 0
+        try:
+            for pkt in self._c.demux(self._s):
+                if pkt.size == 0:
+                    continue
+                if pkt.is_keyframe:
+                    keys.append(n)
+                    if len(keys) == 2:
+                        break
+                n += 1
+                if n >= max_packets:
+                    break
+        finally:
+            try:
+                self._c.seek(0, stream=self._s)
+            except Exception:  # noqa: BLE001 - a fresh open is the fallback
+                self._c.close()
+                self._c = av.open(self._path)
+                self._s = self._c.streams.video[0]
+                self._s.thread_type = "SLICE"
+                self._s.codec_context.skip_frame = self._skip
+        return keys[1] - keys[0] if len(keys) == 2 else None
 
     @property
     def scale(self) -> tuple[float, float]:
@@ -104,12 +139,16 @@ class KeyframeReader:
         "NONKEY" (a keyframe needs nothing before it); switching to a denser
         mode only produces frames from the next keyframe on."""
         self._s.codec_context.skip_frame = mode
+        self._skip = mode
 
     def frames(self) -> Iterator[tuple[int, np.ndarray]]:
         for f in self._c.decode(self._s):
             if f.pts is None:
                 continue
             idx = int(round((f.pts - self._start) * self._tb * self.fps))
+            if self.min_step and self._last_yield is not None and idx - self._last_yield < self.min_step:
+                continue                       # decoded (unavoidable), never converted
+            self._last_yield = idx
             img = f.to_ndarray(format="bgr24", width=self.width, height=self.height,
                                interpolation="AREA")
             yield idx, img

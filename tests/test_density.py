@@ -141,3 +141,53 @@ def test_fp16_uses_the_current_ultralytics_name():
     assert "half" not in kw                        # deprecated: warns every call
     assert kw.get("quantize") == 16
     assert "quantize" not in perception.build_track_kwargs(CFG.perception, "cpu")
+
+
+@pytest.fixture(scope="module")
+def long_gop_clip(tmp_path_factory):
+    """What phones and re-encodes produce: one keyframe every 250 frames."""
+    import av
+
+    p = tmp_path_factory.mktemp("longgop") / "g250.mp4"
+    with av.open(str(p), "w") as out:
+        s = out.add_stream("libx264", rate=int(FPS))
+        s.width, s.height, s.pix_fmt = 64, 48, "yuv420p"
+        s.codec_context.options = {"g": "250", "x264-params": "scenecut=0"}
+        rng = np.random.default_rng(1)
+        for _ in range(250):
+            img = rng.integers(0, 255, (48, 64, 3), dtype=np.uint8)
+            for pkt in s.encode(av.VideoFrame.from_ndarray(img, format="bgr24")):
+                out.mux(pkt)
+        for pkt in s.encode():
+            out.mux(pkt)
+    return p
+
+
+def test_long_gop_is_sampled_every_half_second_not_every_keyframe(long_gop_clip, model, monkeypatch):
+    b = _budget(long_gop_clip)
+    # The sample rate is under test; a 10 s test clip can otherwise project
+    # past its own tiny budget on a slow runner (the next test covers that).
+    monkeypatch.setattr(b, "project_overrun", lambda *a, **k: False)
+    monkeypatch.setattr(b, "should_stop", lambda: False)
+    t = perception.run_perception(long_gop_clip, b, verbose=False)
+    step = int(round(perception.LONG_GOP_SAMPLE_SEC * FPS))
+    assert t.frame_stride == step                  # not 250: one keyframe would be useless
+    assert model.frames == pytest.approx(250 / step, abs=1)
+    assert t.complete is True
+    assert any("long GOP" in (s.note or "") for s in b.stages)
+
+
+def test_long_gop_full_decode_respects_the_budget(long_gop_clip, model):
+    b = _budget(long_gop_clip)
+    b.force_stop("no time")                        # unlike the keyframe baseline, this mode stops
+    t = perception.run_perception(long_gop_clip, b, verbose=False)
+    assert model.frames == perception._BUDGET_CHECK_EVERY
+    assert t.complete is False
+
+
+def test_reader_reports_the_gop(clip, long_gop_clip):
+    with avdecode.KeyframeReader(clip, FPS) as r:
+        assert r.keyframe_gap == GOP
+        assert len(list(r.frames())) == N // GOP   # the probe seeks back: nothing lost
+    with avdecode.KeyframeReader(long_gop_clip, FPS) as r:
+        assert r.keyframe_gap is None              # < 2 keyframes in the probe window
