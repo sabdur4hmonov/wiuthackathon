@@ -3,7 +3,17 @@ import { AnnotatedPlayer } from "./components/AnnotatedPlayer.tsx";
 import { EventTimeline } from "./components/EventTimeline.tsx";
 import { RiskCurve } from "./components/RiskCurve.tsx";
 import illustrativeJson from "./fixtures/illustrative_predictions.json";
-import { createJob, getJob, getJobResult } from "./lib/api.ts";
+import { createJob, getHealth, getJob, getJobResult } from "./lib/api.ts";
+import {
+  adapterStatusCopy,
+  coverageMessage,
+  executionMessage,
+  FORMAT_VALIDATION_MESSAGE,
+  PHASE_6_COVERAGE,
+  UNVERIFIED_COVERAGE,
+  type AdapterAvailability,
+  type CoverageStatus,
+} from "./lib/disclosures.ts";
 import {
   parsePredictions,
   type ParsedPredictions,
@@ -41,11 +51,13 @@ function PredictionReview({
   videoUrl,
   durationSec,
   onDurationChange,
+  coverage = UNVERIFIED_COVERAGE,
 }: {
   bundle: ParsedPredictions;
   videoUrl?: string;
   durationSec?: number;
   onDurationChange?: (seconds: number) => void;
+  coverage?: CoverageStatus;
 }) {
   const filenames = Object.keys(bundle.document.videos);
   const [filename, setFilename] = useState(filenames[0] ?? "");
@@ -81,6 +93,11 @@ function PredictionReview({
         ) : (
           <span className="filename-pill">{selectedName}</span>
         )}
+      </div>
+      <div className="review-disclosures" aria-label="Prediction limitations">
+        <p>{executionMessage(bundle.source.kind)}</p>
+        <p>{coverageMessage(coverage)}</p>
+        {bundle.source.kind === "sample" && <p>{FORMAT_VALIDATION_MESSAGE}</p>}
       </div>
       <div className="review-grid">
         <AnnotatedPlayer
@@ -151,6 +168,7 @@ export function App() {
   const [sampleBusy, setSampleBusy] = useState(false);
   const [sampleError, setSampleError] = useState<string | null>(null);
   const sampleController = useRef<AbortController | null>(null);
+  const [adapterAvailability, setAdapterAvailability] = useState<AdapterAvailability>("checking");
 
   useEffect(() => () => uploadController.current?.abort(), []);
   useEffect(() => {
@@ -163,6 +181,15 @@ export function App() {
     return () => controller.abort();
   }, []);
   useEffect(() => () => sampleController.current?.abort(), []);
+  useEffect(() => {
+    const controller = new AbortController();
+    getHealth(controller.signal)
+      .then((health) => setAdapterAvailability(health.model_connected ? "available" : "unavailable"))
+      .catch((error: unknown) => {
+        if (!isAbort(error)) setAdapterAvailability("unknown");
+      });
+    return () => controller.abort();
+  }, []);
 
   async function openSample(entry: SampleEntry) {
     sampleController.current?.abort();
@@ -259,6 +286,8 @@ export function App() {
     }
   }
 
+  const modelStatus = adapterStatusCopy(adapterAvailability);
+
   return (
     <>
       <header className="site-header">
@@ -315,24 +344,25 @@ export function App() {
             <article className="process-card"><span>03</span><h3>Official harness</h3><p>Unchanged runner writes the canonical prediction JSON.</p></article>
             <article className="process-card"><span>04</span><h3>Operator view</h3><p>Timeline, risk curve, synchronized playback and review.</p></article>
           </div>
-          <div className="info-strip"><strong>Model status</strong><span>Scene zones and event rules are still being developed. This page makes no detection-quality claim.</span></div>
+          <div className="info-strip"><strong>{modelStatus.label}</strong><span>{modelStatus.detail}</span></div>
+          <div className="info-strip"><strong>Scene geometry</strong><span>Phase 6 geometry has been authored and validator-verified. Geometry validation does not establish detection accuracy.</span></div>
         </section>
 
         <section className="section shell" id="eda">
           <div className="section-heading"><span className="eyebrow">03 / Exploratory analysis</span><h2>Evidence before interpretation.</h2><p>The real sample videos have not been processed into publishable EDA in this repository.</p></div>
-          <div className="placeholder-card"><span className="placeholder-icon">▦</span><div><h3>Sample analysis awaiting source material</h3><p>Resolution, FPS, duration, object counts, motion heatmaps, trajectories, lane directions, density and failure cases will be reported from actual footage and measurements.</p></div></div>
+          <div className="placeholder-card"><span className="placeholder-icon">▦</span><div><h3>Validated camera analysis pending</h3><p>Local camera clips exist, but no decoded EDA report or annotated ground truth has been validated for publication. Object counts, heatmaps, trajectories, density and failure cases will appear only when measured from authorized data.</p></div></div>
         </section>
 
         <section className="section shell" id="results">
-          <div className="section-heading"><span className="eyebrow">04 / Results</span><h2>Measured results belong here.</h2><p>Real sample timelines, annotated videos and performance analysis will be published after inference on the organizer clips and manual validation.</p></div>
+          <div className="section-heading"><span className="eyebrow">04 / Results</span><h2>Measured results belong here.</h2><p>Camera-sample timelines require a validated official-harness result and publication clearance. Performance claims additionally require ground truth.</p></div>
           {sampleCatalog.length === 0 ? (
-            <div className="placeholder-card"><span className="placeholder-icon">◇</span><div><h3>No validated real sample results yet</h3><p>The repository's current <code>predictions_samples.json</code> is from a generated synthetic clip and is excluded from this results section.</p></div></div>
+            <div className="placeholder-card"><span className="placeholder-icon">◇</span><div><h3>Awaiting publishable real evidence</h3><p>The repository contains format/schema-valid camera predictions, but footage provenance and publication rights are not confirmed. Its mixed synthetic/camera <code>predictions_samples.json</code> includes private harness logs and is excluded from this public catalog. Format validation is not detection-accuracy validation.</p><p className="limitation-note">Phase 6: {coverageMessage(PHASE_6_COVERAGE)} Its all-zero risk series is recorded model output, not proof that the scene is safe and not an accuracy claim.</p></div></div>
           ) : (
             <div className="resource-row">
               {sampleCatalog.map((entry) => <button className="button secondary" key={entry.id} onClick={() => openSample(entry)} disabled={sampleBusy}>{entry.label}</button>)}
             </div>
           )}
-          {sampleBusy && <p className="feedback" role="status">Loading validated sample result…</p>}
+          {sampleBusy && <p className="feedback" role="status">Loading prediction-format-validated sample result…</p>}
           {sampleError && <p className="feedback error" role="alert">{sampleError}</p>}
           {sample && <SampleReview key={sample.entry.id} entry={sample.entry} bundle={sample.bundle} />}
         </section>
@@ -343,7 +373,7 @@ export function App() {
           <PredictionReview bundle={illustrativeFixture} />
 
           <div className="upload-block">
-            <div><span className="eyebrow">Live upload</span><h3>Bring your own MP4</h3><p>The local API accepts MP4 uploads up to 100 MiB and checks declared duration against 120 seconds. When a model is connected, independent decoded-duration verification runs before inference. Jobs expire after 15 minutes. The model remains disconnected for now.</p></div>
+            <div><span className="eyebrow">Live upload</span><h3>Bring your own MP4</h3><p>The local API accepts MP4 uploads up to 100 MiB and checks declared duration against 120 seconds. When an adapter is available, independent decoded-duration verification runs before inference. Jobs expire after 15 minutes.</p><p className="adapter-status"><strong>{modelStatus.label}.</strong> {modelStatus.detail}</p></div>
             <div className="upload-controls">
               <label className="file-label">
                 <span>{uploads.selectedFile?.name ?? "Choose an .mp4 file"}</span>
@@ -372,8 +402,8 @@ export function App() {
           <div className="section-heading"><span className="eyebrow">06 / Technical report</span><h2>What is built, and what remains.</h2></div>
           <div className="report-grid">
             <article><span className="report-marker done">✓</span><h3>Available now</h3><p>Typed prediction validation, source-labelled visualizations, synchronized playback interface and an upload job API that keeps server paths private.</p></article>
-            <article><span className="report-marker pending">→</span><h3>Awaiting model data</h3><p>Real event intervals, risk curves, camera EDA, annotated sample videos and measured failure analysis.</p></article>
-            <article><span className="report-marker pending">→</span><h3>Next integration</h3><p>Connect the unchanged organizer harness through the demo adapter, then test real uploads and deployment limits.</p></article>
+            <article><span className="report-marker pending">→</span><h3>Evidence limits</h3><p>Full-video perception coverage and detection accuracy remain unverified. Empty events and all-zero risk describe supplied output only.</p></article>
+            <article><span className="report-marker pending">→</span><h3>{modelStatus.label}</h3><p>{modelStatus.detail}</p></article>
           </div>
           <div className="resource-row" id="links"><a href="https://github.com/sabdur4hmonov/wiuthackathon" target="_blank" rel="noreferrer">Source repository ↗</a><span>Weights and real sample prediction links will be added after verification.</span></div>
         </section>

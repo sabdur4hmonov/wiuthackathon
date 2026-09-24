@@ -27,8 +27,10 @@ The organizer JSON does **not** have a provenance field: the caller supplies
 
 `web/src/fixtures/illustrative_predictions.json` is invented **interface test
 data**, not inference or a real camera clip. It is never shown in Results or
-EDA as measured evidence. The existing root `predictions_samples.json` was
-generated from a synthetic clip and is also not presented as real footage.
+EDA as measured evidence. The root `predictions_samples.json` now contains a
+synthetic clip **and** two locally held camera clips from the ML owner's
+concurrent commit. It includes private harness logs and is not loaded by the
+website or treated as an accuracy result.
 
 The Results section loads `web/public/samples/catalog.json`, currently an empty
 list. For a future authorized sample, run the unchanged harness on **one**
@@ -169,11 +171,171 @@ official evaluator has been run against appropriate ground truth.
 
 ## Evidence still required
 
-- Organizer camera video(s) and scene geometry, with redistribution permission.
-- Real sample predictions from the official harness and validation output.
+- Confirmed camera-footage provenance/publication rights and authored scene geometry.
+- Permission-cleared, sanitized real-sample predictions and ground-truth-based
+  evaluation when available.
 - Genuine annotated sample assets or tracks for overlays.
 - Measured EDA, team names/roles, technical report findings, weights link and
   final repository/prediction links.
 
 None of those are invented in the site. `web/README.md` and
 `demo_api/README.md` detail each local component.
+
+## Phase 3 real-data checkpoint (2026-09-23)
+
+The ignored `samples/sample_001.mp4` and `samples/sample_002.mp4` are present
+locally and described as real-camera clips in the ML-owned README. They are
+protected inputs, not website assets. A metadata-only FFmpeg probe reported
+approximately 340.34 s and 317.82 s respectively, both 3840×2160 at 29.97
+fps. These are container-reported values, **not** decoded-duration or
+provenance verification. Neither clip has been copied, changed, staged, or
+published. Their publication rights have not been established. No ground-truth
+annotations or validated real predictions were present at that checkpoint.
+
+The official path for a future local run is:
+
+```powershell
+python run_submission.py --videos samples/sample_001.mp4 --out <private-output.json> --team wiut-cv
+```
+
+The runner imports the unchanged `solution.py`, calls
+`detect_events(str(path))`, then
+calls `RiskEstimator.reset` with video ID/FPS/size/frame count and `step` on
+each decoded frame at `frame_index / fps`. It writes `team`, a filename-keyed
+`videos` map of event intervals and risk points, plus a private `log`. The
+runner may exit successfully while recording per-video errors and replacing a
+timed-out result with empty arrays; the log must therefore be checked before
+format validation. Its nominal budget is 3× the video duration, measured by
+the runner's video metadata. Use the unchanged `evaluate.py --validate-only`
+for format validation, then `demo_api.sample_export` to strip the log only
+after confirming an error-free result. Accuracy requires actual ground truth;
+format validation is not accuracy validation.
+
+No official real-video run was completed in this checkpoint. The repository's
+Python 3.11 virtual environment refers to a base interpreter that this
+execution environment denies launching (`Access is denied`). The bundled
+Python 3.12 runtime lacks OpenCV and Ultralytics and cannot use the virtual
+environment's CPython 3.11 native packages. The local YOLO weights file is
+present, but a runnable environment and a full 3×-budget measurement remain
+unverified here. Independently, `config/zones.json` still contains null scene
+geometry; the registered event rules return nothing without authored zones.
+The current risk estimator stays at its quiet default. These ML-side blockers
+belong to the ML owner and have not been altered by the website work.
+
+Both real clips also exceed the localhost demo's 100 MiB / 120-second upload
+limits. They must be run through the unchanged official harness offline, not
+sent through the current demo API. The sample catalog remains empty. Once the
+ML owner supplies authored zones and a working local environment, run one
+authorized clip with the official harness, inspect its log and runtime,
+validate the exact filename/events/risk with `evaluate.py --validate-only`,
+then export a log-free JSON result. Only after separately confirming footage
+provenance and publication rights should that result be added to the catalog.
+No raw footage or harness diagnostics belong in the website.
+
+## Phase 4 local execution checkpoint (2026-09-24)
+
+**Verified environment.** The existing `.venv` uses Python 3.11.9 but its
+base interpreter is denied execution in this Codex sandbox; `py -0p` reports
+no registered Python. An accessible Python 3.12.14 was used to create a
+separate, gitignored `venv_phase4/` without changing `.venv`. The local
+runtime has OpenCV 5.0.0 (`opencv-python`), NumPy 2.5.2, CPU-only PyTorch
+2.14.0, torchvision 0.29.0, Ultralytics 8.4.160, SciPy 1.18.1, and `lap`
+0.5.13. `torch.cuda.is_available()` is false. Ultralytics needs a writable
+config directory; set `YOLO_CONFIG_DIR` to the local venv before import/run.
+The default OpenCV decode path does not need the optional `imageio-ffmpeg`.
+On a machine with an accessible Python 3.12 on PATH, the isolated setup is:
+
+```powershell
+python -m venv venv_phase4
+.\venv_phase4\Scripts\python.exe -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+.\venv_phase4\Scripts\python.exe -m pip install ultralytics scipy pytest lap
+$env:YOLO_CONFIG_DIR = (Resolve-Path .\venv_phase4).Path
+```
+
+This local setup is not a GPU performance endorsement. `lap` was required by
+the installed Ultralytics tracker even though `requirements.txt` describes a
+SciPy fallback; the ML owner should reconcile that deployment dependency.
+No system Python, weights, or ML implementation was changed.
+
+**Real clip attempt, not a completed result.** OpenCV opened
+`samples/sample_001.mp4` and decoded its first 3840×2160 frame. It reported
+10,200 frames at 29.97002997 fps, or 340.34 s from header metadata; full
+decoded duration was not independently checked. The unchanged command was
+`venv_phase4\Scripts\python.exe run_submission.py --videos
+samples/sample_001.mp4 --out predictions_phase4_real.json --team wiut-cv`
+with default flags. The runner's budget was 1,021 s. Part A reported 39.44 s
+and failed at the first tracker call because `lap` was then missing. Its short
+Part B probe estimated a 5,021.7 s reserve (14.755× video duration), far
+above the whole budget. The attempt was interrupted rather than spending the
+remaining budget on an invalid result: exit code 1, no prediction JSON, no
+event/risk counts, and no validated real output **from this attempt**. The interrupt prevented a
+reliable total elapsed-time measurement. After `lap` was installed, tracker
+import succeeded; a second full real-clip run was not attempted because the
+measured probe still predicts an over-budget CPU run. That projection is not
+an observed full-run time. Peak memory was not measured.
+
+**Separate ML/data blockers.** The unchanged zone validator reports
+`config/zones.json: NOT AUTHORED` with 18 problems. The current registered
+event rules cannot use missing scene geometry, and the risk estimator remains
+at its quiet default. No ground-truth labels or publication clearance are
+available. None of these is repaired or inferred by the website layer. The
+sample catalog stays empty, and no real evidence artifact is published.
+
+**Checks.** Frontend: 13 tests and production build passed. The official
+validator accepted the shipped mixed synthetic/camera `predictions_samples.json`; this is
+format validation only. On the new CPU environment, the focused harness test
+suite had 4 performance-related failures: a tiny synthetic clip took 12.8 s
+against a 4.8 s budget, so the unchanged runner discarded its events/risk.
+The demo API suite had 21 passes and one Windows temporary-directory lock
+failure in its timeout test (the test passes in isolation). These failures
+remain visible; no tests or ML code were changed to hide them.
+
+**Concurrent ML-owner result, checked read-only.** While this Phase 4 work was
+in progress, HEAD advanced independently to `0b44db2` (the only committed
+file was the protected `predictions_samples.json`). For `sample_001.mp4`, that
+file's harness log reports 340.34 s of footage, 786.4 s total runtime against
+a 1,021.0 s budget (reported ratio 2.3106×), zero harness errors, zero events,
+and 10,200 risk points, all with score 0. The unchanged official validator
+and the existing single-video sanitizer accept its event/risk structure. This
+is format/log validation of a committed ML-owner artifact, **not** an
+independently reproduced run, accuracy measurement, or publication clearance.
+The raw file contains harness logs and must never be linked from the website.
+`evidence/sample_001.metadata.json` records only safe counts/status and the
+source file fingerprint for handoff. It deliberately omits video and raw logs.
+The public sample catalog remains empty until provenance and redistribution
+rights are confirmed and a log-free prediction is explicitly approved.
+
+## Phase 6 current checkpoint (2026-09-24)
+
+This checkpoint supersedes earlier statements that scene geometry was still
+being developed; the historical Phase 3 and Phase 4 notes above are retained
+as records of those earlier states. Phase 6 geometry was authored against a
+3840×2160 authoring frame at frame 3400 / 113.4467s. The zones validator
+passed with zero errors. The checkpoint inventory recorded 12 lanes, 1 stop
+line, 3 crossings, 1 queue zone, 1 signal, and 7 markings. This validator
+result establishes geometry/schema validity only. It does not establish
+detection accuracy. The backend working tree, including its separately
+protected current four queue zones, is outside the website ownership boundary
+and was not changed by this checkpoint documentation.
+
+The Phase 6 run did not establish full-video perception coverage. Part A
+stopped early because the Part B reserve estimate became approximately 3452s;
+the Part A hard limit became 0s. Actual Part A coverage was approximately 0.6s
+/ 10 processed frames. The total observed runtime was 1003.2s / 340.34s =
+2.9476x, including Part B at 954.3s. The recorded risk output was all zero.
+That is recorded model output, not proof that the scene was safe and not an
+accuracy claim. An approximately 22 px camera-pose offset was observed during
+the first approximately 30s.
+
+The prediction/schema format was validated, but format-valid output is not a
+meaningful full-video evaluation. Empty events mean only that no events are
+present in the supplied prediction; they do not mean the entire video was
+checked or that no events occurred. No accuracy claim is made without verified
+ground truth, and full-video coverage remains unverified/partial for this run.
+
+The website now reads the existing `/api/health` response and reports model
+adapter availability only from its explicit `model_connected` boolean. It
+distinguishes adapter available, adapter unavailable/disconnected, and health
+status unknown. It also labels fixture or catalog data as supplied prediction
+data viewed without live model execution. Sample labels say prediction
+format/schema validated and explicitly do not imply detection accuracy.

@@ -8,6 +8,23 @@ export interface JobView {
   message: string;
 }
 
+export interface HealthView {
+  ok: true;
+  model_connected: boolean;
+}
+
+export function parseHealth(input: unknown): HealthView {
+  if (
+    typeof input !== "object" ||
+    input === null ||
+    (input as { ok?: unknown }).ok !== true ||
+    typeof (input as { model_connected?: unknown }).model_connected !== "boolean"
+  ) {
+    throw new Error("Demo API returned an invalid health response.");
+  }
+  return input as HealthView;
+}
+
 async function readJson(response: Response): Promise<unknown> {
   let payload: unknown;
   try {
@@ -33,6 +50,11 @@ export async function createJob(file: File, signal?: AbortSignal): Promise<JobVi
     signal,
   });
   return (await readJson(response)) as JobView;
+}
+
+export async function getHealth(signal?: AbortSignal): Promise<HealthView> {
+  const response = await fetch("/api/health", { signal });
+  return parseHealth(await readJson(response));
 }
 
 export async function getJob(jobId: string, signal?: AbortSignal): Promise<JobView> {

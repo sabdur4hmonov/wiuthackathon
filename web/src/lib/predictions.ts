@@ -183,7 +183,7 @@ export function parsePredictions(
 
 export function sourceLabel(source: PredictionSource): string {
   if (source.kind === "fixture") return `ILLUSTRATIVE FIXTURE · ${source.label}`;
-  if (source.kind === "sample") return `VALIDATED REAL SAMPLE · ${source.label}`;
+  if (source.kind === "sample") return `PREDICTION FORMAT/SCHEMA VALIDATED · REAL SAMPLE · DETECTION ACCURACY NOT VALIDATED · ${source.label}`;
   return `LIVE UPLOAD INFERENCE · ${source.label}`;
 }
 

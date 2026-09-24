@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { PredictionSource, VideoPrediction } from "../lib/predictions.ts";
 import { sourceLabel } from "../lib/predictions.ts";
 import { buildTimeline } from "../lib/timeline.ts";
+import { EMPTY_EVENT_MESSAGE } from "../lib/disclosures.ts";
 
 interface Props {
   prediction: VideoPrediction;
@@ -48,7 +49,7 @@ export function EventTimeline({
       </div>
       <p className="data-origin">{sourceLabel(source)}</p>
       {data.lanes.length === 0 ? (
-        <div className="empty-state">No event intervals in this prediction.</div>
+        <div className="empty-state">{EMPTY_EVENT_MESSAGE}</div>
       ) : (
         <>
           <div className="timeline-ruler" aria-hidden="true">

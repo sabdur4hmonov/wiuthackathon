@@ -4,8 +4,19 @@ import { OFFICIAL_CLASSES, parsePredictions, sourceLabel, type PredictionSource 
 import { buildTimeline } from "./timeline.ts";
 import { prepareRiskSeries, riskAtTime } from "./risk.ts";
 import { initialUploadState, uploadReducer } from "./uploadSession.ts";
-import type { JobView } from "./api.ts";
+import { parseHealth, type JobView } from "./api.ts";
 import { parseSampleCatalog, parseValidatedSample } from "./sampleResults.ts";
+import {
+  adapterStatusCopy,
+  ALL_ZERO_RISK_MESSAGE,
+  coverageMessage,
+  EMPTY_EVENT_MESSAGE,
+  executionMessage,
+  FORMAT_VALIDATION_MESSAGE,
+  isAllZeroRecordedRisk,
+  PHASE_6_COVERAGE,
+  UNVERIFIED_COVERAGE,
+} from "./disclosures.ts";
 
 const fixture: PredictionSource = { kind: "fixture", label: "invented test data" };
 const sample: PredictionSource = { kind: "sample", label: "measured clip 1" };
@@ -65,8 +76,61 @@ test("provenance is external to official JSON", () => {
   if (fixtureResult.ok && sampleResult.ok) {
     assert.deepEqual(fixtureResult.value.document, sampleResult.value.document);
     assert.match(sourceLabel(fixtureResult.value.source), /ILLUSTRATIVE/);
-    assert.match(sourceLabel(sampleResult.value.source), /VALIDATED REAL SAMPLE/);
+    assert.match(sourceLabel(sampleResult.value.source), /FORMAT\/SCHEMA VALIDATED/);
+    assert.match(sourceLabel(sampleResult.value.source), /DETECTION ACCURACY NOT VALIDATED/);
   }
+});
+
+test("adapter status reports unavailable only from an explicit health response", () => {
+  const health = parseHealth({ ok: true, model_connected: false });
+  const copy = adapterStatusCopy(health.model_connected ? "available" : "unavailable");
+  assert.match(copy.label, /unavailable \/ disconnected/i);
+  assert.match(copy.detail, /explicitly reports/);
+  assert.match(copy.detail, /without live model execution/);
+});
+
+test("adapter status reports available without claiming prediction execution", () => {
+  const health = parseHealth({ ok: true, model_connected: true });
+  const copy = adapterStatusCopy(health.model_connected ? "available" : "unavailable");
+  assert.match(copy.label, /adapter available/i);
+  assert.match(copy.detail, /does not itself run the live model/);
+  assert.match(executionMessage("sample"), /without live model execution/);
+});
+
+test("malformed health remains unknown instead of inferring availability", () => {
+  assert.throws(() => parseHealth({ ok: true }), /invalid health response/);
+  const copy = adapterStatusCopy("unknown");
+  assert.match(copy.label, /status unavailable/i);
+  assert.match(copy.detail, /unknown rather than inferred/);
+});
+
+test("partial and unverified coverage never imply the full video was checked", () => {
+  const partial = coverageMessage(PHASE_6_COVERAGE);
+  assert.match(partial, /approximately 0\.6 s \/ 10 processed frames/);
+  assert.match(partial, /Full-video perception coverage is not verified/);
+  const unverified = coverageMessage(UNVERIFIED_COVERAGE);
+  assert.match(unverified, /Coverage not verified/);
+  assert.doesNotMatch(`${partial} ${unverified}`, /full video (was )?checked/i);
+});
+
+test("empty events describe supplied prediction rather than scene truth", () => {
+  assert.match(EMPTY_EVENT_MESSAGE, /No events in the supplied prediction/);
+  assert.match(EMPTY_EVENT_MESSAGE, /does not establish full-video perception coverage/);
+  assert.match(EMPTY_EVENT_MESSAGE, /prove that no events occurred/);
+});
+
+test("all-zero risk is recorded output, not safety or accuracy evidence", () => {
+  assert.equal(isAllZeroRecordedRisk([[0, 0], [1, 0]], true), true);
+  assert.equal(isAllZeroRecordedRisk([[0, 0], [1, 0.1]], true), false);
+  assert.equal(isAllZeroRecordedRisk([[0, 0]], false), false);
+  assert.match(ALL_ZERO_RISK_MESSAGE, /recorded model output/);
+  assert.match(ALL_ZERO_RISK_MESSAGE, /not proof that the scene is safe/);
+  assert.match(ALL_ZERO_RISK_MESSAGE, /not an accuracy claim/);
+});
+
+test("prediction validation wording is explicitly format-only", () => {
+  assert.match(FORMAT_VALIDATION_MESSAGE, /format\/schema validated only/);
+  assert.match(FORMAT_VALIDATION_MESSAGE, /detection accuracy was not validated/);
 });
 
 test("timeline retains separate lanes and long arrays", () => {

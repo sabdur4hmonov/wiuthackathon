@@ -29,3 +29,11 @@ Optional track sidecar schema:
 trajectory points and unique track IDs per five-second bin as hooks for future
 plots; this is **not** object density ground truth. No sidecar means null hooks,
 not simulated trajectories or density.
+
+The local `samples/sample_001.mp4` and `samples/sample_002.mp4` are protected
+camera inputs, but no decoded EDA report or ground-truth annotation set was
+produced for Phase 3. Container metadata alone is not a decoded EDA result.
+When a runnable OpenCV environment is available, run this tool on an authorized
+clip and review the resulting provenance-unverified report before publication.
+Without annotations, do not infer detection accuracy or failure rates from a
+prediction's event counts.

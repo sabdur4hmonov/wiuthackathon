@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { PredictionSource, VideoPrediction } from "../lib/predictions.ts";
 import { sourceLabel } from "../lib/predictions.ts";
 import { prepareRiskSeries, riskAtTime } from "../lib/risk.ts";
+import { ALL_ZERO_RISK_MESSAGE, isAllZeroRecordedRisk } from "../lib/disclosures.ts";
 
 interface Props {
   prediction: VideoPrediction;
@@ -27,6 +28,7 @@ export function RiskCurve({ prediction, source, durationSec, currentTime, onSeek
     .map(([time, score]) => `${left + (time / duration) * plotWidth},${top + (1 - score) * plotHeight}`)
     .join(" ");
   const currentRisk = currentTime === undefined ? null : riskAtTime(prediction.risk, currentTime);
+  const showAllZeroLimitation = isAllZeroRecordedRisk(prediction.risk, source.kind !== "fixture");
 
   return (
     <section className="panel risk-panel" aria-label="Accident risk curve">
@@ -101,6 +103,7 @@ export function RiskCurve({ prediction, source, durationSec, currentTime, onSeek
             <span>0.5 alarm threshold</span>
             {currentRisk !== null && <strong>At playhead: {currentRisk.toFixed(2)}</strong>}
           </div>
+          {showAllZeroLimitation && <p className="limitation-note">{ALL_ZERO_RISK_MESSAGE}</p>}
         </>
       )}
     </section>
