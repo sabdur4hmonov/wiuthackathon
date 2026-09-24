@@ -1,10 +1,9 @@
 """Loading, validating and querying the hand-authored scene geometry.
 
-config/zones.json ships with every geometric field null. That is deliberate:
-there is no camera.md in the kit, so nothing about this scene is known until a
-human draws it against a real frame. A half-authored file must never silently
-produce plausible-looking garbage, so `load_zones` validates by default and
-raises on the first null it finds.
+config/zones.json describes the real camera's scene, traced against its own
+footage (there is no camera.md in the kit). A half-authored file must never
+silently produce plausible-looking garbage, so `load_zones` validates by
+default and raises on any null or TODO it finds.
 
 Rules code should never touch the raw dict. It asks this module questions --
 "is this point on the carriageway", "which lane is it in", "did it cross a stop
@@ -41,6 +40,10 @@ class Lane:
     direction: tuple[float, float]           # unit vector, image space
     permitted_manoeuvres: frozenset[str]
     governed_by_stop_line: str | None
+    # Optional name of the direction of travel this lane belongs to (e.g.
+    # "southbound"). Only congestion reads it; when no lane sets one, rules
+    # fall back to clustering lanes by their arrows.
+    direction_group: str | None = None
 
     def contains(self, pt: g.Point) -> bool:
         return g.point_in_polygon(pt, self.polygon)
@@ -79,6 +82,11 @@ class Area:
     id: str
     polygon: np.ndarray
     lanes: tuple[str, ...] = ()
+    # Per edge (vertex i -> i+1): True where the edge runs along the border of
+    # the authored frame. Such an edge is where the picture ends, not a kerb.
+    # Computed once in authored coordinates, so it survives rescaling and
+    # camera-pose warping, which only move vertices.
+    frame_edges: tuple[bool, ...] = ()
 
     def contains(self, pt: g.Point) -> bool:
         return g.point_in_polygon(pt, self.polygon)
@@ -282,6 +290,9 @@ def validate_raw(raw: dict) -> list[str]:
         if bad:
             errors.append(f"{where}.permitted_manoeuvres has unknown values {sorted(bad)}; "
                           f"allowed: {sorted(MANOEUVRES)}")
+        grp = ln.get("direction_group")
+        if grp is not None and (not isinstance(grp, str) or _is_todo(grp)):
+            errors.append(f"{where}.direction_group must be a name or absent, got {grp!r}")
 
     # -- stop lines --------------------------------------------------------
     sl_ids: set[str] = set()
@@ -418,13 +429,15 @@ def load_zones(path: str | Path | None = None,
             direction=dvec,
             permitted_manoeuvres=frozenset(ln.get("permitted_manoeuvres") or []),
             governed_by_stop_line=ln.get("governed_by_stop_line"),
+            direction_group=ln.get("direction_group"),
         ))
 
     z = Zones(
         image_width=int(round(aw * sx)) or aw,
         image_height=int(round(ah * sy)) or ah,
         source_video=aa.get("source_video"),
-        carriageway=tuple(Area(a.get("id", f"cw{i}"), poly(a["polygon"]))
+        carriageway=tuple(Area(a.get("id", f"cw{i}"), poly(a["polygon"]),
+                               frame_edges=_frame_edges(a["polygon"], aw, ah))
                           for i, a in enumerate(d.get("carriageway") or [])),
         lanes=tuple(lanes),
         stop_lines=tuple(StopLine(sl["id"], seg(sl["segment"]),
@@ -448,6 +461,22 @@ def load_zones(path: str | Path | None = None,
         scale=(sx, sy),
     )
     return z
+
+
+def _frame_edges(raw_pts: Any, width: float, height: float,
+                 tol: float = 2.0) -> tuple[bool, ...]:
+    """Which edges of an authored polygon lie along the authored frame border."""
+    p = np.asarray(raw_pts, dtype=float).reshape(-1, 2)
+    if not width or not height or p.shape[0] < 2:
+        return ()
+    q = np.roll(p, -1, axis=0)
+    out = []
+    for (x1, y1), (x2, y2) in zip(p, q):
+        out.append(bool((abs(x1) <= tol and abs(x2) <= tol)
+                        or (abs(x1 - width) <= tol and abs(x2 - width) <= tol)
+                        or (abs(y1) <= tol and abs(y2) <= tol)
+                        or (abs(y1 - height) <= tol and abs(y2 - height) <= tol)))
+    return tuple(out)
 
 
 def is_authored(path: str | Path | None = None) -> bool:

@@ -284,3 +284,33 @@ def test_vectorised_is_actually_fast():
     t0 = time.perf_counter()
     g.points_in_polygon(pts, poly)
     assert time.perf_counter() - t0 < 0.5
+
+
+# ---------------------------------------------------------------------------
+# distance to boundary
+# ---------------------------------------------------------------------------
+def test_distance_to_boundary_inside_and_outside():
+    pts = np.array([[5.0, 5.0], [5.0, 1.0], [15.0, 5.0], [13.0, 14.0]])
+    d = g.distances_to_boundary(pts, SQUARE)
+    assert d == pytest.approx([5.0, 1.0, 5.0, 5.0])
+
+
+def test_distance_to_boundary_ignores_keyhole_slits():
+    """A slit into an island is not a kerb; a point beside it is deep in the road."""
+    outer = [(0, 0), (100, 0), (100, 100), (50, 100)]
+    island = [(40, 40), (60, 40), (60, 60), (40, 60)]
+    ring = outer + [island[3]] + island[::-1][1:] + [island[3], (50, 100), (0, 100)]
+    pt = np.array([[46.0, 80.0]])          # ~1 px from the slit, 20 px from real edges
+    assert g.distances_to_boundary(pt, ring)[0] == pytest.approx(20.0)
+
+
+def test_distance_to_boundary_empty_input():
+    assert g.distances_to_boundary(np.empty((0, 2)), SQUARE).shape == (0,)
+
+
+def test_distance_to_boundary_skips_marked_edges():
+    """Where a polygon meets the frame border the picture ends; that is not a kerb."""
+    pts = np.array([[5.0, 9.0]])                 # 1 px from the top edge (y=10)
+    assert g.distances_to_boundary(pts, SQUARE)[0] == pytest.approx(1.0)
+    skip = [False, False, True, False]           # edge 2 runs (10,10)->(0,10)
+    assert g.distances_to_boundary(pts, SQUARE, skip)[0] == pytest.approx(5.0)

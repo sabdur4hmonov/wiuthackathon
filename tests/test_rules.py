@@ -181,10 +181,46 @@ def test_stopped_vehicle_survives_bbox_jitter(zones):
 def test_a_long_gap_does_split_two_different_stops(zones):
     """Beyond max_gap_sec the cluster is closed: two vehicles, two events."""
     b = TrackBuilder(duration=90.0)
-    (b.vehicle(track_id=1).start_at(STOPPED_POINT, t=0.0).stop_for(14.0))
-    (b.vehicle(track_id=2).start_at(STOPPED_POINT, t=40.0).stop_for(14.0))
+    for tid, t0 in ((1, 0.0), (2, 40.0)):
+        (b.vehicle(track_id=tid)
+          .start_at(point_in_lane("ns_nb_outer", 0.02), t=t0)
+          .drive_to(STOPPED_POINT, speed=220.0)
+          .stop_for(14.0)
+          .drive_to(point_in_lane("ns_nb_outer", 0.9), speed=220.0))
     segs = stopped_mod.detect(b.build(), zones)
     assert len(segs) == 2
+
+
+def test_stopped_vehicle_ignores_something_that_never_moves(zones):
+    """Biased quiet: a detection that never arrives or leaves -- street
+    furniture read as a car, or a car parked all clip whose ground point leaks
+    over the kerb -- is not a stop event."""
+    b = TrackBuilder(duration=60.0)
+    b.vehicle().start_at(STOPPED_POINT, t=0.0).stop_for(55.0).with_jitter(3.0)
+    assert stopped_mod.detect(b.build(), zones) == []
+
+
+def test_stopped_vehicle_ignores_the_back_of_a_queue_at_the_zone_edge(zones):
+    """A vehicle stopped just outside a queue zone, jittering over its edge, is
+    the back of the queue -- not a separate stop."""
+    from fixtures.synthetic_scene import ns_x
+    from src.geometry import distances_to_boundary
+
+    q = zones.signal_queue_zones[0].polygon
+    # Walk down the lane from the queue point until just outside the zone.
+    y = QUEUE_POINT[1]
+    while zones.in_signal_queue((ns_x(y, 0.5), y)):
+        y += 2.0
+    edge = (ns_x(y + 6.0, 0.5), y + 6.0)
+    assert not zones.in_signal_queue(edge)
+    assert distances_to_boundary([edge], q)[0] < 30.0
+    b = TrackBuilder(duration=60.0)
+    (b.vehicle()
+      .start_at(point_in_lane("ns_nb_outer", 0.02), t=0.0)
+      .drive_to(edge, speed=220.0)
+      .stop_for(30.0).with_jitter(3.0)
+      .drive_to(point_in_lane("ns_nb_outer", 0.9), speed=220.0))
+    assert stopped_mod.detect(b.build(), zones) == []
 
 
 # ===========================================================================
@@ -340,6 +376,36 @@ def test_jaywalking_ignores_low_confidence_detections(zones):
     assert jaywalking_mod.detect(b.build(), zones) == []
 
 
+def test_jaywalking_ignores_a_rider_on_a_motorcycle(zones):
+    """A person box inside a two-wheeler's box is a rider, not a pedestrian --
+    the main source of "people" on a real carriageway."""
+    b = TrackBuilder(duration=20.0)
+    path = ((JAYWALK_POINT[0] - 260.0, JAYWALK_POINT[1]),
+            (JAYWALK_POINT[0] + 260.0, JAYWALK_POINT[1]))
+    b.vehicle(cls=3).start_at(path[0], t=0.0).drive_to(path[1], duration=8.0)
+    b.pedestrian().start_at(path[0], t=0.0).drive_to(path[1], duration=8.0)
+    tracks = b.build()
+    # The same rider box scaled to sit inside the motorcycle's box.
+    person = tracks.data[:, 3] == 0
+    moto = tracks.data[tracks.data[:, 3] == 3]
+    tracks.data[person, 5:9] = moto[:, 5:9]
+    assert jaywalking_mod.detect(tracks, zones) == []
+
+
+def test_jaywalking_silent_just_outside_the_zebra_edge(zones):
+    """Walking along the edge of the stripes, inside the margin, is not
+    jaywalking at this bar."""
+    from fixtures.synthetic_scene import ns_x
+
+    xw = zones.crossings[0].polygon
+    y_top = float(xw[:, 1].min())
+    b = TrackBuilder(duration=20.0)
+    (b.pedestrian()
+      .start_at((ns_x(y_top - 12.0, -0.9), y_top - 12.0), t=0.0)
+      .drive_to((ns_x(y_top - 12.0, 0.9), y_top - 12.0), duration=9.0))
+    assert jaywalking_mod.detect(b.build(), zones) == []
+
+
 def test_jaywalking_does_not_blip_on_a_pedestrian_hovering_at_the_kerb(zones):
     """Jitter across the kerb line must not produce a shower of sub-second
     events, each of which would be a false positive."""
@@ -406,14 +472,44 @@ def test_congestion_fires_when_every_lane_of_a_direction_crawls(zones):
     assert total > 20.0
 
 
-def test_congestion_silent_when_only_one_lane_crawls(zones):
-    """The class definition says ALL lanes of a direction."""
+def test_congestion_silent_when_the_direction_keeps_flowing(zones):
+    """Judged for the direction as a whole: one crawling lane beside a lane
+    that flows the whole time is not a congested direction."""
     b = TrackBuilder(duration=60.0)
     _fill_lane(b, "ns_nb_outer", 4, 0.72, 0.98, speed=10.0, duration=45.0)
-    for i in range(3):
-        (b.vehicle().start_at(point_in_lane("ns_nb_inner", 0.05 + 0.1 * i), t=0.0)
+    for i in range(22):
+        (b.vehicle().start_at(point_in_lane("ns_nb_inner", 0.05), t=2.0 * i)
            .drive_to(point_in_lane("ns_nb_inner", 0.95), speed=200.0))
     assert congestion_mod.detect(b.build(), zones) == []
+
+
+def _named_zones(zones, groups):
+    """The same scene with explicit direction_group names on the lanes."""
+    import dataclasses
+
+    lanes = tuple(dataclasses.replace(ln, direction_group=groups.get(ln.id))
+                  for ln in zones.lanes)
+    return dataclasses.replace(zones, lanes=lanes)
+
+
+def test_congestion_uses_named_direction_groups(zones):
+    """zones.json can name the directions; then clustering is not used and a
+    lane with no group takes no part."""
+    named = _named_zones(zones, {"ns_nb_inner": "northbound",
+                                 "ns_nb_outer": "northbound"})
+    groups = congestion_mod.direction_groups(named, 45.0)
+    assert [name for name, _ in groups] == ["northbound"]
+
+    b = TrackBuilder(duration=60.0)
+    for lane_id in ("ns_nb_inner", "ns_nb_outer"):
+        _fill_lane(b, lane_id, 4, 0.72, 0.98, speed=10.0, duration=45.0)
+    tracks = b.build()
+    segs = congestion_mod.detect(tracks, named)
+    assert len(segs) >= 1 and segs[0].debug["direction"] == "northbound"
+
+    # The same crawl in lanes that belong to no named direction is ignored.
+    other = _named_zones(zones, {"ew_eb_inner": "eastbound"})
+    assert congestion_mod.detect(b.build(), other) == []
 
 
 def test_congestion_silent_on_a_normal_red_light_queue(zones):
@@ -580,3 +676,60 @@ def test_stage_2_is_fast(zones):
         f"({index_cost:.2f}s) on {len(tracks)} rows; the index is probably "
         f"being rebuilt per rule"
     )
+
+
+# ===========================================================================
+# lessons from the real footage (sample_001/002, 2026-09-24)
+# ===========================================================================
+def _stop_at(b, pt, stop_sec=16.0):
+    (b.vehicle()
+      .start_at(point_in_lane("ns_nb_outer", 0.02), t=0.0)
+      .drive_to(pt, speed=220.0)
+      .stop_for(stop_sec)
+      .drive_to(point_in_lane("ns_nb_outer", 0.9), speed=220.0))
+
+
+def test_stopped_vehicle_silent_when_part_of_a_queue(zones):
+    """Two cars standing side by side are traffic standing -- a queue or a jam
+    -- not a stopped vehicle. Real run: a taxi in a line of five stopped cars."""
+    beside = (STOPPED_POINT[0] - 90.0, STOPPED_POINT[1])
+    assert zones.on_carriageway(beside) and not zones.in_signal_queue(beside)
+    b = TrackBuilder(duration=40.0)
+    _stop_at(b, STOPPED_POINT)
+    _stop_at(b, beside)
+    assert stopped_mod.detect(b.build(), zones) == []
+
+    alone = TrackBuilder(duration=40.0)          # control: the same stop, alone, fires
+    _stop_at(alone, STOPPED_POINT)
+    assert len(stopped_mod.detect(alone.build(), zones)) == 1
+
+
+def test_stopped_vehicle_ignores_a_box_cut_by_the_frame(zones):
+    """A box truncated by the frame has the frame edge for a ground point."""
+    edge = (STOPPED_POINT[0], 1080.0)
+    assert zones.on_carriageway(edge)
+    b = TrackBuilder(duration=40.0)
+    _stop_at(b, edge, stop_sec=20.0)
+    assert stopped_mod.detect(b.build(), zones) == []
+
+
+def test_wrong_way_only_judges_painted_lanes(zones):
+    """An unpainted lane's direction is not trustworthy enough to accuse anyone.
+    Real run: 11 lawful vehicles flagged in the unpainted area right of the refuge."""
+    import dataclasses
+
+    from src.zones import LaneMarking
+
+    painted = {lid for m in zones.lane_markings for lid in m.separates}
+    assert "ns_sb_outer" not in painted
+    b = TrackBuilder(duration=40.0)
+    (b.vehicle()
+      .start_at(point_in_lane("ns_sb_outer", 0.95), t=0.0)
+      .drive_to(point_in_lane("ns_sb_outer", 0.02), speed=90.0))
+    tracks = b.build()
+    assert wrong_way_mod.detect(tracks, zones) == []
+
+    # Control: paint that lane and the same drive is judged.
+    mark = LaneMarking("m_sb", ((0.0, 0.0), (1.0, 1.0)), "dashed", ("ns_sb_outer",))
+    marked = dataclasses.replace(zones, lane_markings=zones.lane_markings + (mark,))
+    assert len(wrong_way_mod.detect(tracks, marked)) >= 1

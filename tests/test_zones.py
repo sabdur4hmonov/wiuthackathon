@@ -1,8 +1,8 @@
 """zones.json schema, validator and loader.
 
 The validator's job is to make a half-authored config impossible to run with.
-The shipped config/zones.json must therefore FAIL validation until a human has
-drawn the scene -- that is the single most important assertion here.
+A null template must refuse to load, loudly; the shipped config/zones.json is
+the real camera's authored scene and must load cleanly.
 """
 from __future__ import annotations
 
@@ -19,51 +19,66 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 # ---------------------------------------------------------------------------
-# the shipped template
+# the shipped, authored scene
 # ---------------------------------------------------------------------------
 def test_shipped_zones_json_is_valid_json():
     json.loads(ZONES_PATH.read_text(encoding="utf-8"))
 
 
-def test_shipped_zones_json_fails_validation_until_authored():
-    """No fabricated coordinates. It must refuse to load, loudly."""
+def test_shipped_zones_json_validates_and_loads():
     raw = json.loads(ZONES_PATH.read_text(encoding="utf-8"))
-    errors = validate_raw(raw)
-    assert errors, "the shipped template must NOT pass validation"
-    assert any("un-authored" in e or "positive int" in e for e in errors)
+    assert validate_raw(raw) == []
+    assert is_authored(ZONES_PATH) is True
+    z = load_zones(ZONES_PATH)
+    assert (z.image_width, z.image_height) == (3840, 2160)
+    for lane in z.lanes:
+        assert np.hypot(*lane.direction) == pytest.approx(1.0)
 
 
-def test_shipped_zones_json_has_no_fabricated_geometry():
-    """Every geometric field ships null."""
-    raw = json.loads(ZONES_PATH.read_text(encoding="utf-8"))
+def test_shipped_zones_name_both_avenue_directions():
+    """congestion is judged per direction; the real scene names them."""
+    z = load_zones(ZONES_PATH)
+    groups = {ln.direction_group for ln in z.lanes}
+    assert {"southbound", "northbound"} <= groups
+    # Lanes of one named direction must actually point the same way.
+    for name in ("southbound", "northbound"):
+        dirs = [ln.direction for ln in z.lanes if ln.direction_group == name]
+        for d in dirs[1:]:
+            assert float(np.dot(dirs[0], d)) > 0.8, name
+
+
+def _null_template() -> dict:
+    """A CP0-style template: every geometric field present but null."""
+    d = complete_zones()
+    d["authored_against"].update(image_width=None, image_height=None)
     for section in ("carriageway", "lanes", "crossings", "signal_queue_zones"):
-        for item in raw.get(section, []):
-            assert item.get("polygon") is None, f"{section} has a polygon filled in"
-    for item in raw.get("stop_lines", []) + raw.get("lane_markings", []):
-        assert item.get("segment") is None
-    for item in raw.get("traffic_lights", []):
-        assert item.get("roi") is None
-    aa = raw["authored_against"]
-    assert aa["image_width"] is None and aa["image_height"] is None
+        for item in d[section]:
+            item["polygon"] = None
+    for item in d["stop_lines"] + d["lane_markings"]:
+        item["segment"] = None
+    for item in d["traffic_lights"]:
+        item["roi"] = None
+    return d
 
 
-def test_shipped_template_documents_every_section():
-    """Each section carries a _draw note saying what to trace."""
-    raw = json.loads(ZONES_PATH.read_text(encoding="utf-8"))
-    for section in ("carriageway", "lanes", "stop_lines", "crossings",
-                    "signal_queue_zones", "traffic_lights", "lane_markings"):
-        assert raw[section], f"{section} has no template entry"
-        assert any(k.startswith("_draw") for k in raw[section][0]), \
-            f"{section} template has no _draw instruction"
-
-
-def test_is_authored_is_false_for_the_template():
-    assert is_authored(ZONES_PATH) is False
-
-
-def test_load_zones_raises_on_the_template():
+def test_a_null_template_fails_validation(tmp_path):
+    """No fabricated coordinates: an unauthored file must refuse to load."""
+    errors = validate_raw(_null_template())
+    assert errors
+    assert any("un-authored" in e or "positive int" in e for e in errors)
+    p = write(tmp_path, _null_template())
+    assert is_authored(p) is False
     with pytest.raises(ZonesError, match="not fully authored"):
-        load_zones(ZONES_PATH)
+        load_zones(p)
+
+
+def test_direction_group_is_optional(tmp_path):
+    d = complete_zones()
+    assert load_zones(write(tmp_path, d)).lanes[0].direction_group is None
+    d["lanes"][0]["direction_group"] = "northbound"
+    assert load_zones(write(tmp_path, d)).lanes[0].direction_group == "northbound"
+    d["lanes"][0]["direction_group"] = "TODO"
+    assert any("direction_group" in e for e in validate_raw(d))
 
 
 # ---------------------------------------------------------------------------
@@ -246,3 +261,11 @@ def test_comment_keys_are_ignored_by_the_validator():
     d["_README"] = ["chatter"]
     d["lanes"][0]["_draw"] = "trace this"
     assert validate_raw(d) == []
+
+
+def test_carriageway_edges_on_the_frame_border_are_marked(tmp_path):
+    """Only the edges along the authored frame border are frame edges."""
+    z = load_zones(write(tmp_path, complete_zones()))
+    # [[0,500],[1920,500],[1920,1080],[0,1080]]: top is a kerb; right, bottom and
+    # left run along the frame border.
+    assert z.carriageway[0].frame_edges == (False, True, True, True)

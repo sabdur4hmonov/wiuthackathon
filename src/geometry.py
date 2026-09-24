@@ -108,6 +108,43 @@ def points_in_polygon(pts: np.ndarray, poly: Polygon) -> np.ndarray:
     return inside | on_edge
 
 
+def distances_to_boundary(pts: np.ndarray, poly: Polygon,
+                          skip=None) -> np.ndarray:
+    """(N,) distance from each point to the nearest real edge of `poly`.
+
+    `skip`: optional per-edge booleans (edge i runs from vertex i to i+1);
+    True edges are ignored -- e.g. where the polygon meets the frame border.
+
+    Keyhole slits are skipped: zones.json cuts islands out of one carriageway
+    ring with zero-width slits (an edge immediately retraced in reverse). Those
+    slits are not kerbs, and counting them would carve a no-go strip across open
+    road wherever a margin test is applied.
+    """
+    pts = np.asarray(pts, dtype=float).reshape(-1, 2)
+    p = np.asarray(poly, dtype=float).reshape(-1, 2)
+    if pts.shape[0] == 0 or p.shape[0] < 2:
+        return np.full(pts.shape[0], np.inf)
+    a, b = p, np.roll(p, -1, axis=0)
+    fwd = {(tuple(u), tuple(v)) for u, v in zip(a, b)}
+    keep = np.array([(not np.allclose(u, v)) and ((tuple(v), tuple(u)) not in fwd)
+                     for u, v in zip(a, b)])
+    if skip is not None and len(skip) == len(keep):
+        keep &= ~np.asarray(skip, dtype=bool)
+    if not keep.any():
+        return np.full(pts.shape[0], np.inf)
+    a, b = a[keep], b[keep]
+    ab = b - a                                                   # (E, 2)
+    ab2 = np.maximum((ab * ab).sum(-1), EPS)[None]
+    out = np.empty(pts.shape[0])
+    for lo in range(0, pts.shape[0], 4096):                      # bound the (N, E, 2) temporaries
+        q = pts[lo:lo + 4096]
+        ap = q[:, None, :] - a[None, :, :]
+        t = np.clip((ap * ab[None]).sum(-1) / ab2, 0.0, 1.0)
+        d = q[:, None, :] - (a[None] + t[..., None] * ab[None])
+        out[lo:lo + 4096] = np.hypot(d[..., 0], d[..., 1]).min(axis=1)
+    return out
+
+
 def _point_on_segment(pt: Point, seg: Segment, tol: float = 1e-6) -> bool:
     (x1, y1), (x2, y2) = seg
     x, y = pt
@@ -300,5 +337,13 @@ def bbox_ground_point(x1: float, y1: float, x2: float, y2: float) -> Point:
     vehicle driving perfectly straight. The bottom edge midpoint is where the
     object meets the road plane, which is the only point a ground-plane zone
     test is valid for.
+
+    KNOWN FAILURE, NOT FIXED: on the real oblique camera the bottom-centre of a
+    TALL vehicle's box is not under the vehicle. The box's bottom edge is set by
+    the wheels nearest the camera, and its centre sits about half a box-width
+    toward the camera -- roughly half a lane. Seen on sample_001 f3400: a box
+    truck driving in SB3 reads as SB2. Lane membership is therefore biased one
+    lane toward the camera for trucks and buses. Fixing it needs a ground-plane
+    model (a homography plus a per-class footprint offset), not a tweak here.
     """
     return ((x1 + x2) / 2.0, y2)

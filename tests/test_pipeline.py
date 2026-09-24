@@ -81,10 +81,26 @@ def test_a_rules_failure_does_not_stop_other_rules(monkeypatch):
 # ---------------------------------------------------------------------------
 # zones
 # ---------------------------------------------------------------------------
-def test_unauthored_zones_yield_none_not_an_exception():
-    """CP0 must run before the geometry exists."""
+def test_unauthored_zones_yield_none_not_an_exception(tmp_path, monkeypatch):
+    """A scene whose geometry is not drawn yet must not break the pipeline."""
+    import json
+
+    from src import zones as zones_mod
+
+    template = {"schema_version": 1,
+                "authored_against": {"image_width": None, "image_height": None},
+                "carriageway": [{"id": "main", "polygon": None}], "lanes": []}
+    p = tmp_path / "zones.json"
+    p.write_text(json.dumps(template), encoding="utf-8")
+    monkeypatch.setattr(zones_mod, "ZONES_PATH", p)
     t = TrackTable.empty(width=1920, height=1080)
     assert _get_zones(t, verbose=False) is None
+
+
+def test_shipped_zones_load_for_the_real_camera():
+    t = TrackTable.empty(width=3840, height=2160)
+    z = _get_zones(t, verbose=False)
+    assert z is not None and (z.image_width, z.image_height) == (3840, 2160)
 
 
 def test_rules_receiving_none_zones_emit_nothing():

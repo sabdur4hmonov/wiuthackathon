@@ -60,19 +60,19 @@
     ],
     [
      2539.0,
-     578.0
+     640.0
     ],
     [
      2743.0,
-     667.0
+     750.0
     ],
     [
      3113.0,
-     778.0
+     880.0
     ],
     [
-     3539.0,
-     870.0
+     3450.0,
+     925.0
     ],
     [
      3650.0,
@@ -315,7 +315,8 @@
     961.6
    ],
    "permitted_manoeuvres": [],
-   "governed_by_stop_line": "SL_SB"
+   "governed_by_stop_line": "SL_SB",
+   "direction_group": "southbound"
   },
   {
    "id": "SB2",
@@ -350,7 +351,8 @@
     773.0
    ],
    "permitted_manoeuvres": [],
-   "governed_by_stop_line": "SL_SB"
+   "governed_by_stop_line": "SL_SB",
+   "direction_group": "southbound"
   },
   {
    "id": "SB3",
@@ -381,7 +383,8 @@
     719.5
    ],
    "permitted_manoeuvres": [],
-   "governed_by_stop_line": "SL_SB"
+   "governed_by_stop_line": "SL_SB",
+   "direction_group": "southbound"
   },
   {
    "id": "SB4",
@@ -412,7 +415,8 @@
     662.2
    ],
    "permitted_manoeuvres": [],
-   "governed_by_stop_line": "SL_SB"
+   "governed_by_stop_line": "SL_SB",
+   "direction_group": "southbound"
   },
   {
    "id": "SB5",
@@ -443,7 +447,8 @@
     608.8
    ],
    "permitted_manoeuvres": [],
-   "governed_by_stop_line": "SL_SB"
+   "governed_by_stop_line": "SL_SB",
+   "direction_group": "southbound"
   },
   {
    "id": "NB1",
@@ -482,7 +487,8 @@
     699.5
    ],
    "permitted_manoeuvres": [],
-   "governed_by_stop_line": null
+   "governed_by_stop_line": null,
+   "direction_group": "northbound"
   },
   {
    "id": "NB2",
@@ -513,7 +519,8 @@
     538.6
    ],
    "permitted_manoeuvres": [],
-   "governed_by_stop_line": null
+   "governed_by_stop_line": null,
+   "direction_group": "northbound"
   },
   {
    "id": "NB3",
@@ -544,7 +551,8 @@
     519.1
    ],
    "permitted_manoeuvres": [],
-   "governed_by_stop_line": null
+   "governed_by_stop_line": null,
+   "direction_group": "northbound"
   },
   {
    "id": "NB4_far_busstop",
@@ -579,19 +587,19 @@
     ],
     [
      2539.0,
-     578.0
+     640.0
     ],
     [
      2743.0,
-     667.0
+     750.0
     ],
     [
      3113.0,
-     778.0
+     880.0
     ],
     [
-     3539.0,
-     870.0
+     3450.0,
+     925.0
     ],
     [
      3650.0,
@@ -607,15 +615,16 @@
     ]
    ],
    "direction_from": [
-    2114.8,
-    539.4
+    2108.4,
+    561.0
    ],
    "direction_to": [
-    1884.4,
-    472.1
+    1878.1,
+    493.7
    ],
    "permitted_manoeuvres": [],
-   "governed_by_stop_line": null
+   "governed_by_stop_line": null,
+   "direction_group": "northbound"
   },
   {
    "id": "NB_approach",
@@ -646,7 +655,8 @@
     1107.2
    ],
    "permitted_manoeuvres": [],
-   "governed_by_stop_line": null
+   "governed_by_stop_line": null,
+   "direction_group": "northbound"
   },
   {
    "id": "SB_exit",
@@ -681,7 +691,8 @@
     1632.0
    ],
    "permitted_manoeuvres": [],
-   "governed_by_stop_line": null
+   "governed_by_stop_line": null,
+   "direction_group": "southbound"
   },
   {
    "id": "LEG_out",
@@ -956,7 +967,23 @@
     ],
     [
      3840.0,
-     1438.1
+     1720.0
+    ],
+    [
+     3600.0,
+     1690.0
+    ],
+    [
+     3300.0,
+     1420.0
+    ],
+    [
+     3000.0,
+     1270.0
+    ],
+    [
+     2800.0,
+     1150.0
     ]
    ]
   },
@@ -967,8 +994,16 @@
    ],
    "polygon": [
     [
-     1150.0,
-     276.6
+     850.0,
+     214.8
+    ],
+    [
+     891.0,
+     222.0
+    ],
+    [
+     1261.0,
+     300.0
     ],
     [
      1631.0,
@@ -987,8 +1022,36 @@
      728.1
     ],
     [
-     1150.0,
-     377.4
+     850.0,
+     289.8
+    ]
+   ]
+  },
+  {
+   "id": "Q_SB_exit_downstream",
+   "lanes": [
+    "SB_exit"
+   ],
+   "polygon": [
+    [
+     2300.0,
+     1600.0
+    ],
+    [
+     2560.0,
+     1450.0
+    ],
+    [
+     3840.0,
+     1450.0
+    ],
+    [
+     3840.0,
+     2160.0
+    ],
+    [
+     2300.0,
+     2160.0
     ]
    ]
   },
@@ -1181,5 +1244,5 @@
    ]
   }
  ],
- "notes": "DRAFT (Claude, 2026-09-24) - needs human review. Traced on frames/cleanplate_pose_A.png (per-pixel median of 60 settled frames from sample_001 f1000+ and sample_002), registered to sample_001 f3400 within ~1 px. Scene: divided avenue from the upper-left to the right edge with a raised median; a one-way OUTBOUND leg at the bottom-left under the diagonal zebra; camera high on the SW corner. SB = near side of the median, flows down-right to the stop line; NB = far side, enters from the right edge and flows to the upper-left. CAMERA POSE: this geometry fits sample_001 after ~frame 900 and all of sample_002. sample_001 frames 0-~900 sit ~22 px off; sample_004 ~15-60 px off; sample_003 ~55-150 px off (shift -130,+77, scale 1.014, rot -1 deg) - a static zones.json is NOT valid there without per-video registration. DIRECTIONS: every lane arrow is along its painted lines with the sign taken from optical flow measured over 40 one-second windows. MANOEUVRES: no painted lane arrows are visible, so permitted_manoeuvres is empty (unknown) everywhere; flow suggests SB1_flare carries the right turn into the bottom-left leg. NB approach: no stop line visible and its signal faces away from the camera, so red_light/stop_line cannot be judged for NB. SIGNAL: TL_median_nose is the only readable head (red top, amber middle, green bottom; ROI encloses all three lamps in pose A; green reads confirmed by SB traffic crossing the stop line 84% (sample_001) / 69% (sample_002) of the time; red lamp lights only 3-11 px so src/thresholds.py min_lit_pixels=12 returns UNKNOWN for most red phases - a threshold calibration issue, not the ROI); the overhead gantry heads show only backplates; the 2-lamp head on the camera-corner mast is unused (purpose unknown). NB left-turners cross the SB through stream into the bottom-left leg; that conflict area deliberately has no lane. PARKING: the left parking bay and the right corner plaza are outside the carriageway; buses dwell at the NB bus stop (Q_NB_busstop). The service road beyond the far sidewalk at the very top is excluded."
+ "notes": "DRAFT (Claude, 2026-09-24) - needs human review. Traced on frames/cleanplate_pose_A.png (per-pixel median of 60 settled frames from sample_001 f1000+ and sample_002), registered to sample_001 f3400 within ~1 px. Scene: divided avenue from the upper-left to the right edge with a raised median; a one-way OUTBOUND leg at the bottom-left under the diagonal zebra; camera high on the SW corner. SB = near side of the median, flows down-right to the stop line; NB = far side, enters from the right edge and flows to the upper-left. CAMERA POSE: this is pose A (sample_001 after its first ~30 s settle, all of sample_002). Other framings are handled per video by src/align.py, which warps these zones onto each clip (sample_003: shift -123,+72 px, scale 1.014, rot -0.76 deg; sample_004: -33,+42 px, 1.014, -1.08 deg). DIRECTIONS: every lane arrow is along its painted lines with the sign taken from optical flow measured over 40 one-second windows. MANOEUVRES: no painted lane arrows are visible, so permitted_manoeuvres is empty (unknown) everywhere; flow suggests SB1_flare carries the right turn into the bottom-left leg. NB approach: no stop line visible and its signal faces away from the camera, so red_light/stop_line cannot be judged for NB. SIGNAL: TL_median_nose is the only readable head (red top, amber middle, green bottom; ROI encloses all three lamps in pose A; green reads confirmed by SB traffic crossing the stop line 84% (sample_001) / 69% (sample_002) of the time; red lamp lights only 3-11 px so src/thresholds.py min_lit_pixels=12 returns UNKNOWN for most red phases - a threshold calibration issue, not the ROI); the overhead gantry heads show only backplates; the 2-lamp head on the camera-corner mast is unused (purpose unknown). NB left-turners cross the SB through stream into the bottom-left leg; that conflict area deliberately has no lane. RIGHT SIDE (revised from real tracks 2026-09-24): the far kerb for x >= 2500 follows where vehicles actually drive (a pavement strip runs in front of the planter); NB vehicles queue well below the time-averaged flow split, so Q_NB_approach covers the measured NB queue (down to y~1700 at the right edge); NB_approach and SB_exit are unpainted areas with mixed and turning traffic, so wrong_way does not judge them. SB-exit traffic regularly queues for something downstream, out of frame (Q_SB_exit_downstream). PARKING: the left parking bay and the right corner plaza are outside the carriageway; buses dwell at the NB bus stop (Q_NB_busstop). The service road beyond the far sidewalk at the very top is excluded."
 }

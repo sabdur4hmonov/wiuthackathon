@@ -3,25 +3,24 @@
 =============================================================================
 READ THIS BEFORE TRUSTING ANY NUMBER BELOW
 =============================================================================
-NOT ONE of these values is calibrated against real footage. Every one was
-chosen against tests/fixtures/synthetic_scene.py, which is an invented scene
-with invented perspective, so:
+There are still NO labels. As of CP3 (2026-09-24) the values were checked
+against real tracked footage from the four sample clips -- what fires, and
+what it looks like in the frame -- but never scored against ground truth. So:
 
-  * Every PIXEL threshold is meaningless until the real zones.json exists.
-    Pixels-per-metre on an oblique CCTV view varies by an order of magnitude
-    between the near and far edge of the frame, and the synthetic scene's
-    linear widening is not a real projective mapping.
-  * Every SPEED threshold (px/s) inherits that problem twice over, because it
-    is a pixel distance divided by time.
-  * Every DURATION threshold is the most transferable kind here, because
-    seconds are seconds. The ones taken straight from the task definition
-    (stopped_vehicle >= 10 s) are the only values with real authority.
-  * Every ANGLE threshold is scale-free and should mostly survive, but depends
-    on the lane direction vectors being authored correctly.
+  * Distances and speeds are in BOX HEIGHTS, not pixels (see UNITS below): on
+    this oblique 4K camera a car is ~80 px tall at the far end and ~350 px near
+    the camera, so no fixed pixel bar means the same thing across the frame.
+  * Every DURATION threshold transfers best, because seconds are seconds. The
+    ones taken from the task definition (stopped_vehicle >= 10 s) are the only
+    values with real authority.
+  * Every ANGLE threshold is scale-free, but depends on the lane arrows.
+  * With no labels, every GUESS is biased toward NOT firing: under macro F1 a
+    wrong class costs as much as a missed one, and a quiet rule is the safer
+    failure.
 
 Each entry carries a `# CALIBRATION:` note saying what it is grounded in.
-"SPEC" means the task PDF defines it. "GUESS" means it is a placeholder that
-must be retuned the moment a real clip is labelled.
+"SPEC" means the task PDF defines it. "MEASURED" means read off the real
+footage. "GUESS" means a placeholder to retune the moment a clip is labelled.
 
 The retuning workflow once real labels exist: run the rules over the cached
 tracks, compare to ground_truth.json with evaluate.py --per-video, and sweep
@@ -33,6 +32,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 
+# ---------------------------------------------------------------------------
+# UNITS. Distances and speeds below are in BOX HEIGHTS ("L"), the object's own
+# bounding-box height at that moment, not pixels. The real camera is 4K and
+# strongly oblique: a car is ~80 px tall at the far end of the avenue and
+# ~350 px near the camera, so any fixed pixel bar is several times too strict
+# at one end of the frame and several times too loose at the other. Box jitter
+# scales with box size too, which is what makes L the right yardstick for
+# "did it really move". Speeds are L per second.
+# ---------------------------------------------------------------------------
+
+
 @dataclass(frozen=True)
 class StoppedVehicleThresholds:
     """A vehicle stationary on the carriageway, not queued at a signal."""
@@ -40,124 +50,159 @@ class StoppedVehicleThresholds:
     # CALIBRATION: SPEC. The task defines stopped_vehicle as ">= 10 s".
     min_duration_sec: float = 10.0
 
-    # CALIBRATION: MEASURED against synthetic jitter, then set with margin.
-    # This is a cheap PRE-FILTER, not the decision -- max_drift_px below is
-    # what actually decides whether a vehicle is stopped.
-    #
-    # Why it cannot be tight: speed is a differenced position, so bbox jitter
-    # is amplified by 1/dt. With velocity_window=5 and frame_stride=2 at 25 fps
-    # the centred difference spans 0.32 s, and measurement gives an apparent
-    # speed of roughly 5.6 * jitter_px for a PERFECTLY STATIONARY vehicle:
-    #
-    #     jitter 1 px -> mean  5.6 px/s (p95  11)
-    #     jitter 3 px -> mean 16.7 px/s (p95  34)
-    #     jitter 5 px -> mean 27.9 px/s (p95  56)
-    #
-    # Real CCTV boxes on a stationary vehicle move several pixels frame to
-    # frame, so a threshold below ~30 rejects genuinely stopped vehicles. An
-    # earlier 12.0 here tolerated barely 2 px of jitter and lost the class.
-    # Raising it is safe precisely because displacement, not speed, decides.
-    speed_px_s: float = 45.0
+    # CALIBRATION: GUESS, biased quiet. Weak detections of a static object are
+    # where phantom "vehicles" come from.
+    min_confidence: float = 0.40
 
-    # CALIBRATION: GUESS. A "stop" is keyed off spatial continuity, not
-    # track_id, so an id switch mid-stop does not reset the clock. Two samples
-    # belong to the same physical stop if they are within this radius. Must
-    # exceed the bbox jitter amplitude comfortably.
-    same_stop_radius_px: float = 60.0
+    # CALIBRATION: GUESS. A loose PRE-FILTER only, on net movement over 2 s
+    # (rules.util.sustained_speed). max_drift_L is the real decision.
+    speed_L_s: float = 0.6
 
-    # CALIBRATION: GUESS. A stop survives this much missing data (detector
-    # dropout or occlusion) before it is considered ended.
+    # CALIBRATION: GUESS. The clock is keyed on spatial continuity, not
+    # track_id, so an id switch mid-stop does not reset it. Samples within this
+    # radius of a stop's centre belong to that stop.
+    same_stop_radius_L: float = 0.5
+
+    # CALIBRATION: GUESS. A stop survives this much missing data (dropout or
+    # occlusion) before it is considered ended.
     max_gap_sec: float = 2.0
 
     # CALIBRATION: GUESS, and THE ACTUAL DECISION. A sample joins a stop only
-    # if it is within this distance of where the stop began. Jitter is
-    # zero-mean so it does not accumulate, but real motion does: a vehicle
-    # creeping at 40 px/s clears 90 px in 2.3 s and breaks the cluster long
-    # before the 10 s bar. That is why the speed gate above can be loose.
-    max_drift_px: float = 90.0
+    # if it is within this distance of where the stop began. Jitter does not
+    # accumulate; genuine creep does, and breaks the stop early.
+    max_drift_L: float = 0.6
+
+    # CALIBRATION: GUESS, biased quiet. The stop must be backed by detections
+    # for at least this share of its span, so a "stop" stitched together from
+    # a handful of scattered hits does not count.
+    min_coverage: float = 0.6
+
+    # CALIBRATION: GUESS, biased quiet. A stationary sample this close to a
+    # signal queue zone is treated as queued: a vehicle at the back of a queue
+    # jitters across the zone edge, and the part outside must not add up to a
+    # stop.
+    queue_margin_L: float = 0.5
+
+    # CALIBRATION: GUESS, biased quiet. Some id in the stop must be seen at
+    # least this far from where it stopped -- i.e. it arrived or left during
+    # the clip. A detection that never moves (a mis-detected object, or a car
+    # parked all clip whose ground point leaks over the kerb line) never fires.
+    motion_evidence_L: float = 1.5
+
+    # CALIBRATION: GUESS, biased quiet. A stop is PART OF A QUEUE, not a stopped
+    # vehicle, when another stationary vehicle sits within queue_neighbour_L of
+    # it for at least queue_share of the stop. The first real run fired on a
+    # taxi in a line of five stopped cars downstream of the intersection.
+    queue_neighbour_L: float = 1.5
+    queue_share: float = 0.5
+
+    # CALIBRATION: GUESS, biased quiet. The stop must sit this far inside a real
+    # kerb edge: a car pulled up on the kerb line at the corner plaza is
+    # dropping off, not stopped in the road. A car double-parked in a lane is
+    # well clear of it.
+    kerb_margin_L: float = 0.3
+
+    # CALIBRATION: MEASURED, biased quiet. Boxes smaller than this share of the
+    # frame height are ignored. On the four real clips the only stops left at
+    # this point were distant cars 67-80 px tall (4K) at the far end of the
+    # avenue, half behind a lamp post, one switching track id 7 times in 21 s:
+    # their ground points are not reliable enough to accuse anyone.
+    min_box_frac: float = 0.04
 
 
 @dataclass(frozen=True)
 class WrongWayThresholds:
     """Sustained travel against the authored lane direction."""
 
-    # CALIBRATION: GUESS, but angle thresholds are scale-free so this should
-    # mostly survive. 120 deg leaves a 90 deg turn (a car crossing a lane while
-    # turning) comfortably below the bar, which is the specific false positive
-    # this must avoid.
-    min_angle_deg: float = 120.0
+    # CALIBRATION: GUESS, biased quiet (was 120). Scale-free. A legal turn
+    # crosses its entry lane at ~90 deg; 135 keeps every turn well clear.
+    min_angle_deg: float = 135.0
 
-    # CALIBRATION: GUESS. Below this speed the heading is dominated by box
-    # noise -- and src.geometry.angle_between deliberately returns 180 deg for a
-    # zero vector, so WITHOUT this gate every stationary vehicle reads as
-    # driving the wrong way. This gate is load-bearing, not cosmetic.
-    min_speed_px_s: float = 25.0
+    # CALIBRATION: GUESS. Below this the heading is box noise -- and
+    # geometry.angle_between returns 180 deg for a zero vector, so without
+    # this gate every stationary vehicle reads as driving the wrong way.
+    min_speed_L_s: float = 0.5
 
-    # CALIBRATION: GUESS. Debounce: the divergence must persist this long.
-    min_duration_sec: float = 2.0
+    # CALIBRATION: GUESS, biased quiet (was 2 s). The divergence must persist.
+    min_duration_sec: float = 2.5
 
-    # CALIBRATION: GUESS. ...and the vehicle must actually travel this far
-    # against the lane. Duration alone is not enough: a slow vehicle nosing
-    # sideways in a queue can hold a bad heading for seconds without going
-    # anywhere. Pixel value, so this is one of the first to retune.
-    min_distance_px: float = 120.0
+    # CALIBRATION: GUESS, biased quiet. Net progress AGAINST the lane over the
+    # run, measured along the lane's own axis. Straight-line distance alone
+    # would count a vehicle nosing sideways in a queue.
+    min_progress_L: float = 2.0
 
-    # CALIBRATION: GUESS. Brief gaps in the flag (a frame where the heading
-    # dips below the angle bar, or the ground point leaves the lane polygon)
-    # are bridged rather than splitting one event into two.
+    # CALIBRATION: GUESS. Bridge brief gaps in the flag so one manoeuvre is
+    # one event.
     debounce_gap_sec: float = 1.0
+
+    # CALIBRATION: GUESS, biased quiet.
+    min_confidence: float = 0.40
 
 
 @dataclass(frozen=True)
 class JaywalkingThresholds:
     """A pedestrian on the carriageway outside a crossing."""
 
-    # CALIBRATION: GUESS. Debounce against a pedestrian's ground point
-    # flickering over the kerb line, and against a single bad detection.
-    min_duration_sec: float = 1.0
+    # CALIBRATION: GUESS, biased quiet (was 1 s).
+    min_duration_sec: float = 2.0
 
-    # CALIBRATION: GUESS. Bridge short gaps so one crossing of the road is one
-    # event rather than three.
+    # CALIBRATION: GUESS. Bridge short gaps so one crossing is one event.
     debounce_gap_sec: float = 1.0
 
-    # CALIBRATION: GUESS. Person detections at CCTV range are small and
-    # low-confidence; too high a floor here loses the class entirely, too low
-    # and street furniture becomes a pedestrian. Needs a real clip.
-    min_confidence: float = 0.35
+    # CALIBRATION: GUESS, biased quiet (was 0.35).
+    min_confidence: float = 0.45
+
+    # CALIBRATION: biased quiet. The ground point must be at least kerb_margin_L
+    # inside the carriageway (from a real kerb edge) and crossing_margin_L away
+    # from every crossing polygon. Someone waiting on the kerb, or walking along
+    # the edge of the zebra, is not jaywalking at this bar.
+    #
+    # KNOWN FALSE POSITIVE, ACCEPTED: people who walk parallel to a zebra but
+    # well outside its stripes -- common on the diagonal X_leg crossing -- are
+    # still flagged. Whether a labeller calls that jaywalking is unknown.
+    # MEASURED 2026-09-24 (sample_001+002): at 0.5 L, 14 % of the surviving
+    # candidate rows were people at the bus-stop kerb and boarding buses.
+    kerb_margin_L: float = 1.0
+    crossing_margin_L: float = 0.5
+
+    # CALIBRATION: GUESS. A "person" box with at least this share of its area
+    # inside a vehicle box in the same frame is a rider or an occupant, not a
+    # pedestrian. Motorcyclists and cyclists are the main source of person
+    # detections on the carriageway.
+    rider_overlap: float = 0.5
 
 
 @dataclass(frozen=True)
 class CongestionThresholds:
-    """Standstill or crawling traffic across all lanes of one direction."""
+    """Standstill or crawling traffic across one DIRECTION of travel as a whole."""
 
-    # CALIBRATION: GUESS. "Crawling" in pixels per second. Higher than the
-    # stopped_vehicle bar because congestion includes slow movement, not just
-    # standstill.
-    crawl_speed_px_s: float = 45.0
+    # CALIBRATION: GUESS. "Crawling", measured as net movement over 2 s
+    # (rules.util.sustained_speed) so box jitter does not read as motion.
+    crawl_speed_L_s: float = 0.35
 
-    # CALIBRATION: GUESS. A lane needs at least this many vehicles present
-    # (outside the queue zone) before it can be judged congested at all.
-    # Without it, a single slow car in an empty lane reads as a jam.
-    min_vehicles_per_lane: int = 2
+    # CALIBRATION: GUESS, biased quiet. Vehicles of the direction that must be
+    # present OUTSIDE every queue zone before it can be judged congested.
+    min_vehicles: int = 4
 
-    # CALIBRATION: GUESS. Fraction of the vehicles in a lane that must be slow
-    # for that lane to count as congested.
-    slow_fraction: float = 0.7
+    # CALIBRATION: GUESS, biased quiet. Share of those vehicles that must crawl.
+    # At 0.8, one lane crawling beside a lane still flowing at ~1 car per frame
+    # sits exactly on the bar; a direction that is still moving must not fire.
+    slow_fraction: float = 0.85
 
-    # CALIBRATION: GUESS. Sustained duration. A red phase can legitimately last
-    # 60-90 s, so duration ALONE cannot separate a queue from a jam -- the
-    # spatial test (ignoring vehicles inside signal_queue_zones) is what does
-    # that. This is a secondary guard.
-    min_duration_sec: float = 15.0
+    # CALIBRATION: GUESS, biased quiet (was 15 s). A red phase can run 60-90 s,
+    # so duration alone never separates a queue from a jam -- excluding every
+    # vehicle inside a signal_queue_zone does that. This is a second guard.
+    min_duration_sec: float = 30.0
 
-    # CALIBRATION: GUESS. Bridge gaps where a lane momentarily drops below the
-    # vehicle count, e.g. between detector frames.
+    # CALIBRATION: GUESS. Vehicle count and slow share are judged over this
+    # sliding window, so steady flow past a crawling lane always shows up.
+    window_sec: float = 5.0
+
+    # CALIBRATION: GUESS. Bridge brief dips below the vehicle count.
     debounce_gap_sec: float = 3.0
 
-    # CALIBRATION: GUESS. Lanes are grouped into "directions" by clustering
-    # their authored direction vectors; two lanes within this angle are the
-    # same direction. Wide enough to group lanes that fan out with perspective,
-    # narrow enough to keep opposing directions apart.
+    # CALIBRATION: GUESS. Only used when zones.json names no direction_group:
+    # lanes whose arrows agree within this angle are then one direction.
     direction_group_tolerance_deg: float = 45.0
 
 

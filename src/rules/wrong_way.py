@@ -1,29 +1,36 @@
 """wrong_way -- a vehicle travelling against the direction of its lane.
 
-Three gates, each guarding a specific false positive:
+Lane directions come from zones.json, where each arrow runs along the painted
+lane lines with its sign taken from optical flow measured over the real clips
+-- so "against the lane" means against where traffic was actually seen to go.
 
-  SPEED. src.geometry.angle_between returns 180 degrees for a zero-length
-  vector, deliberately, so that a stationary object never reads as travelling
-  WITH a lane. The consequence is that without a speed gate every parked car
-  reads as travelling AGAINST it. This gate is load-bearing: remove it and the
-  rule fires on every stopped vehicle in the scene.
+Only PAINTED lanes are judged: lanes that some lane_marking separates. A
+lane's direction is only as trustworthy as its paint. On the real camera the
+unpainted areas right of the refuge (NB_approach, SB_exit) carry two-way,
+queued and turning traffic -- the first real run flagged 11 lawful vehicles
+there -- and the one-way leg has no lane lines either. They are treated like
+the intersection box: no opinion. A scene with no markings at all falls back
+to judging every lane.
 
-  ANGLE. 120 degrees, not 90. A vehicle making a legal turn is inside its entry
-  lane's polygon while already heading across it -- a right-angle divergence
-  that is completely lawful. The bar has to sit well clear of 90 degrees or
-  every turn at the intersection becomes a wrong-way event.
+Four gates, each guarding a specific false positive:
 
-  PERSISTENCE. The divergence must last min_duration_sec AND the vehicle must
-  cover min_distance_px against the lane. Duration alone is not enough: a
-  vehicle nosing sideways in a queue holds a bad heading for seconds without
-  going anywhere. Distance alone is not enough either: one noisy frame at speed
-  covers ground. Both together are what a real wrong-way manoeuvre produces.
+  SPEED. geometry.angle_between returns 180 degrees for a zero-length vector,
+  deliberately, so that a stationary object never reads as travelling WITH a
+  lane. Without a speed gate every stopped vehicle reads as travelling AGAINST
+  it. The gate is in box heights per second, so it means the same thing at the
+  far end of the avenue as it does under the camera.
 
-Note on lane membership: the rule only has an opinion where a lane contains the
-ground point. Wherever the authored geometry leaves a gap -- typically the
-intersection box -- there is no lane direction to disagree with, so turns
-through it are silently immune. That is a property of the zones file, not of
-this rule, and it will change when the real zones.json is drawn.
+  ANGLE. 135 degrees. A vehicle making a legal turn is inside its entry lane's
+  polygon while already heading across it, roughly 90 degrees off; the bar
+  sits well clear of that. Turns through the intersection box are immune
+  anyway: the box deliberately has no lane.
+
+  PERSISTENCE. The divergence must last min_duration_sec, bridged across short
+  gaps so heading noise cannot split one manoeuvre into fragments.
+
+  PROGRESS. Over the run the vehicle must make net progress AGAINST the lane
+  axis of at least min_progress_L of its own box height. Straight-line
+  distance alone would count a vehicle nosing sideways in a queue.
 """
 from __future__ import annotations
 
@@ -32,7 +39,7 @@ import numpy as np
 from ..thresholds import TH, WrongWayThresholds
 from ..tracks import COL
 from . import FrameSegment, rule
-from .util import runs_to_segments
+from .util import box_heights, runs_to_segments
 from .zoneindex import zone_index
 
 
@@ -54,12 +61,14 @@ def detect(tracks, zones, th: WrongWayThresholds | None = None
     gx, gy = data[:, COL["gx"]], data[:, COL["gy"]]
     vx, vy = data[:, COL["vx"]], data[:, COL["vy"]]
     speed = data[:, COL["speed"]]
+    conf = data[:, COL["conf"]]
+    size = box_heights(data)
 
-    # Angle against the lane, for every row at once. Same definition as
-    # geometry.angle_between (including its 180-degree answer for a degenerate
-    # vector), but without a Python call per row: at 40k rows the loop costs
-    # more than every other rule combined.
+    # Angle against the lane for every row at once; same definition as
+    # geometry.angle_between, including its 180-degree answer for a zero vector.
     lane_dirs = idx.lane_directions()
+    painted = {lid for m in zones.lane_markings for lid in m.separates}
+    judged = np.array([(ln.id in painted) or not painted for ln in zones.lanes] + [False])
     vnorm = np.hypot(vx, vy)
     with np.errstate(invalid="ignore", divide="ignore"):
         cosang = np.where(vnorm > 1e-9,
@@ -67,17 +76,16 @@ def detect(tracks, zones, th: WrongWayThresholds | None = None
                           / np.maximum(vnorm, 1e-9),
                           -1.0)
     offset_deg = np.degrees(np.arccos(np.clip(cosang, -1.0, 1.0)))
-    # Gates: fast enough for the heading to mean anything, inside a lane, and
-    # opposed by more than a legal turn ever is.
-    opposed = ((speed >= th.min_speed_px_s)
-               & (idx.lane_idx >= 0)
-               & (offset_deg >= th.min_angle_deg))
+    opposed = ((speed >= th.min_speed_L_s * size)
+               & judged[idx.lane_idx]                 # lane_idx -1 hits the False sentinel
+               & (offset_deg >= th.min_angle_deg)
+               & (conf >= th.min_confidence))
 
     fps = veh.fps or 25.0
     step = max(1, veh.frame_stride)
     out: list[FrameSegment] = []
 
-    for tid in np.unique(ids):
+    for tid in np.unique(ids[opposed]):
         if tid < 0:
             continue
         sel = np.flatnonzero(ids == tid)
@@ -85,29 +93,31 @@ def detect(tracks, zones, th: WrongWayThresholds | None = None
             continue
         sel = sel[np.argsort(frames[sel], kind="stable")]
 
-        flags = opposed[sel]
-
-        runs = runs_to_segments(frames[sel], flags, fps,
+        runs = runs_to_segments(frames[sel], opposed[sel], fps,
                                 min_duration_sec=th.min_duration_sec,
                                 gap_sec=th.debounce_gap_sec,
                                 frame_stride=step)
         for s, e in runs:
-            m = (frames[sel] >= s) & (frames[sel] <= e)
-            if not m.any():
+            rows = sel[(frames[sel] >= s) & (frames[sel] <= e) & opposed[sel]]
+            if rows.size < 2:
                 continue
-            rows = sel[m]
-            # Straight-line displacement over the run, not path length: a
-            # vehicle that wobbles in place covers path distance without
-            # actually going anywhere against the traffic.
-            px = float(np.hypot(gx[rows[-1]] - gx[rows[0]],
-                                gy[rows[-1]] - gy[rows[0]]))
-            if px < th.min_distance_px:
+            axis = lane_dirs[rows].mean(axis=0)
+            norm = float(np.hypot(*axis))
+            if norm < 1e-6:
+                continue
+            axis /= norm
+            # Net displacement projected on the lane axis; positive = against.
+            against = -float((gx[rows[-1]] - gx[rows[0]]) * axis[0]
+                             + (gy[rows[-1]] - gy[rows[0]]) * axis[1])
+            unit = float(np.median(size[rows]))
+            if against < th.min_progress_L * unit:
                 continue
             out.append(FrameSegment(
                 s, e,
-                score=min(1.0, px / max(th.min_distance_px, 1e-6)),
+                score=min(1.0, against / max(th.min_progress_L * unit, 1e-6)),
                 track_ids=(int(tid),),
-                debug={"distance_px": round(px, 1),
-                       "duration_sec": round((e - s + step) / fps, 2)},
+                debug={"against_L": round(against / unit, 2),
+                       "duration_sec": round((e - s + step) / fps, 2),
+                       "lane": zones.lanes[int(np.bincount(idx.lane_idx[rows]).argmax())].id},
             ))
     return out

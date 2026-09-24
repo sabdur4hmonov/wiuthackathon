@@ -597,3 +597,71 @@ pass; the 4 failures are exactly this pre-existing, load-sensitive gap.
    to include very short clips.
 4. **Zones are still un-authored** -- unchanged from CP1, still the single
    blocking item for Part A to score above zero.
+
+## CP3: the four rule classes on real footage (2026-09-24)
+
+Stage 1 was run in full (no budget stop) on all four real clips and cached;
+the rules and the unchanged Stage 3 then run off the cache. Zones are aligned
+to each clip's camera pose first (`src/align.py`, committed separately), so
+sample_003/004 -- framed up to ~150 px differently -- are real dev clips too.
+There are still **no labels**: every threshold is biased toward not firing,
+because under macro F1 a wrong class costs as much as a missed one.
+
+### What fires (`solution.detect_events`, cache hits)
+
+| clip | jaywalking | stopped_vehicle | wrong_way | congestion |
+|---|---|---|---|---|
+| sample_001 (340 s) | 1: 01:50–01:56 | 0 | 0 | 0 |
+| sample_002 (318 s) | 3: 01:18–01:25, 02:20–02:23, 02:51–02:54 | 0 | 0 | 0 |
+| sample_003 (318 s) | 4: 01:27–01:35, 02:52–02:55, 03:01–03:05, 04:19–04:22 | 0 | 0 | 0 |
+| sample_004 (128 s) | 2: 00:19–00:25, 00:26–00:35 | 0 | 0 | 0 |
+
+The jaywalking events were checked frame by frame: people walking mid-block,
+cutting from the zebra across the box, and walking between queued cars --
+except sample_002 02:51, a moped rider the detector did not box as a
+motorcycle, so the rider test had nothing to match.
+
+### What the real footage changed
+
+The first real run fired 19 events on sample_002 alone. Each was traced to a
+cause in the frames, and fixed at the cause:
+
+* **wrong_way judges painted lanes only.** All 11 hits were lawful traffic in
+  the unpainted area right of the refuge, where NB and SB traffic, NB queues
+  and turning vehicles share the road. A lane's direction is only as good as
+  its paint.
+* **The NB queue is bigger than the flow map said.** NB cars queued at red do
+  not move, so the optical-flow split missed them; `Q_NB_approach` now covers
+  where tracks were measured standing. SB-exit traffic also queues for
+  something downstream, out of frame (>= 1 standing vehicle in 54 % of
+  sample_001's frames): `Q_SB_exit_downstream`. The bus-stop zone starts
+  behind the stop, where traffic waits for a dwelling bus.
+* **The far kerb, right of x = 2500, was traced ~100 px too high** in tree
+  shade: vehicles never drove within 100 px of it, pedestrians did by the
+  thousand. Moved to where vehicles actually are.
+* **stopped_vehicle** now ignores stops that are part of a queue, boxes cut off
+  by the frame edge, cars pulled up on the kerb line, and very small distant
+  boxes. On these four clips it fires nowhere.
+* **jaywalking** needs a full body height inside the kerb (bus-stop boarding
+  was 14 % of candidates at half a body height), ignores boxes cut by the frame
+  and person boxes inside a vehicle box (riders, passengers).
+* **congestion** is judged per direction as a whole (SB, NB; named in
+  zones.json), over a sliding window, on traffic outside every queue zone. It
+  never came close to firing: the SB side has almost nothing countable once
+  the approach and the downstream queue are excluded.
+* A kerb-margin test must not treat the frame border as a kerb: carriageway
+  edges on the authored frame border are marked and skipped.
+
+### Known limits, not fixed
+
+* **Ground contact on tall vehicles**: the bottom-centre of a truck's box sits
+  half a lane toward the camera (`geometry.bbox_ground_point`). Lane-level
+  rules are biased for trucks and buses.
+* **A jam confined to the approach looks like a long red** and is not
+  detected: telling them apart needs the signal phase per frame.
+* **People walking just outside a zebra** are flagged (accepted).
+* **The budget on this CPU machine**: the measured Part B floor on these 4K
+  clips leaves Part A's hard limit near zero, so on a real harness run here
+  perception -- and alignment -- would barely start. The four
+  `test_harness_contract` failures (tiny clips over their 5 s budget) are the
+  same pre-existing gap from CP2: identical before and after CP3.

@@ -8,7 +8,73 @@ from __future__ import annotations
 
 import numpy as np
 
+from ..geometry import distances_to_boundary
+from ..tracks import COL
 from . import FrameSegment
+
+
+def box_heights(data: np.ndarray) -> np.ndarray:
+    """(N,) box height per row, the unit ("L") every distance threshold uses."""
+    return np.maximum(data[:, COL["y2"]] - data[:, COL["y1"]], 1.0)
+
+
+def cut_by_frame(data: np.ndarray, width: float, height: float,
+                 margin: float = 2.0) -> np.ndarray:
+    """(N,) True where a box touches the left, right or bottom frame edge.
+
+    Such a box is truncated, so its bottom-centre is where the picture ends,
+    not where the object meets the road. Every false stopped_vehicle and three
+    false jaywalking events on the first real run had one.
+    """
+    return ((data[:, COL["x1"]] <= margin) | (data[:, COL["x2"]] >= width - margin)
+            | (data[:, COL["y2"]] >= height - margin))
+
+
+def sustained_speed(tracks, window_sec: float = 2.0) -> np.ndarray:
+    """(N,) speed from net displacement over +-window/2 of each row, px/s.
+
+    The table's own `speed` is a ~0.3 s centred difference, which box jitter
+    dominates for a slow vehicle. Rules that ask "is this vehicle crawling"
+    need movement over seconds, where jitter averages out and real creep
+    accumulates. Untracked rows (id -1) have no history: they get +inf, so no
+    rule can mistake them for a stationary vehicle.
+
+    Memoised on the table: two rules ask for it.
+    """
+    key = ("sustained_speed", float(window_sec))
+    hit = tracks._memo.get(key)
+    if hit is not None:
+        return hit
+    data = tracks.data
+    out = np.full(data.shape[0], np.inf)
+    ids = data[:, COL["track_id"]].astype(np.int64)
+    t = data[:, COL["t_sec"]].astype(float)
+    order = np.lexsort((t, ids))
+    uniq, starts = np.unique(ids[order], return_index=True)
+    half = window_sec / 2.0
+    for tid, rows in zip(uniq.tolist(), np.split(order, starts[1:])):
+        if tid < 0:
+            continue
+        tt = t[rows]
+        if rows.size < 2 or tt[-1] - tt[0] <= 1e-6:
+            continue
+        x, y = data[rows, COL["gx"]], data[rows, COL["gy"]]
+        lo = np.clip(tt - half, tt[0], tt[-1])
+        hi = np.clip(tt + half, tt[0], tt[-1])
+        dt = np.maximum(hi - lo, 1e-6)
+        out[rows] = np.hypot(np.interp(hi, tt, x) - np.interp(lo, tt, x),
+                             np.interp(hi, tt, y) - np.interp(lo, tt, y)) / dt
+    tracks._memo[key] = out
+    return out
+
+
+def min_boundary_distance(pts: np.ndarray, areas) -> np.ndarray:
+    """(N,) distance from each point to the nearest edge of any of `areas`."""
+    out = np.full(len(pts), np.inf)
+    for a in areas:
+        out = np.minimum(out, distances_to_boundary(
+            pts, a.polygon, getattr(a, "frame_edges", None) or None))
+    return out
 
 
 def runs_to_segments(frames: np.ndarray, flags: np.ndarray, fps: float,
