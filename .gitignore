@@ -9,6 +9,7 @@ venv*/
 # Model weights: fetched by weights/download.sh, or committed deliberately.
 # Un-ignore whatever you actually ship.
 weights/*.pt
+!weights/yolo11s.pt
 weights/.torch/
 !weights/download.sh
 
