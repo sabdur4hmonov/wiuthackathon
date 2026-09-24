@@ -138,6 +138,17 @@ class WrongWayThresholds:
     # CALIBRATION: GUESS, biased quiet.
     min_confidence: float = 0.40
 
+    # MEASURED, not a guess: the longest gap between samples this rule can
+    # trust. At keyframe rate (0.5 s) a platoon of cars moving about one
+    # car-gap per sample ALIASES: the tracker hops back to the car behind each
+    # sample, and the track drifts slowly BACKWARDS. On sample_002 at 0:46 real
+    # cars moved left at 550-680 px/s while keyframe tracks drifted right at
+    # 150-200 px/s in lanes NB1-NB3 -- 11-13 false wrong_way events over the
+    # four clips, where full-rate CP3 had none. Tracks carry position, not
+    # direction or speed, at that rate. The rule stays silent unless Stage 1
+    # sampled at least this densely (the optional dense mode, 0.1 s).
+    max_sample_sec: float = 0.2
+
 
 @dataclass(frozen=True)
 class JaywalkingThresholds:
@@ -204,6 +215,10 @@ class CongestionThresholds:
     # CALIBRATION: GUESS. Only used when zones.json names no direction_group:
     # lanes whose arrows agree within this angle are then one direction.
     direction_group_tolerance_deg: float = 45.0
+
+    # Same aliasing limit as WrongWayThresholds.max_sample_sec: an aliased
+    # platoon of cars reads as crawling traffic.
+    max_sample_sec: float = 0.2
 
 
 @dataclass(frozen=True)

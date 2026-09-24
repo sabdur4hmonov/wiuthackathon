@@ -1,7 +1,11 @@
 """Stage 1 -- video in, tracks out. The only stage that touches pixels.
 
 Detector: YOLO11s (Ultralytics), local weights, loaded once per process.
-Tracker:  ByteTrack.
+Decoder:  keyframes only, through PyAV (src/avdecode.py): one frame per GOP,
+          0.5 s apart on the real clips.
+Tracker:  ByteTrack with a motion-tolerant association (src/tracker.py) --
+          stock ByteTrack links boxes by overlap and cannot follow a walking
+          pedestrian across 0.5 s. cv2/ffmpeg fallbacks keep model.track.
 
 Why this pair, for a T4 and a 3x-duration budget:
 
@@ -21,9 +25,12 @@ Why this pair, for a T4 and a 3x-duration budget:
 
 ID-SWITCH BEHAVIOUR -- every rule downstream assumes track continuity, so:
   - ByteTrack is motion-only (IoU + Kalman). It has NO appearance model.
-  - A track occluded for <= track_buffer frames is re-associated and KEEPS its
-    id. Past that it is deleted, and the object gets a NEW id on reappearance.
-    At stride 2 on 25 fps, the default 30-frame buffer is ~2.4 s of real time.
+  - A track occluded for <= track_buffer_sec (2 s) is re-associated and KEEPS
+    its id. Past that it is deleted, and the object gets a NEW id on
+    reappearance.
+  - At 0.5 s per sample a platoon of cars ALIASES: the track hops back one car
+    per sample and drifts backwards. Tracks carry position, not direction or
+    speed, at that rate (see thresholds.WrongWayThresholds.max_sample_sec).
   - Two similar boxes crossing with high IoU CAN swap ids. On this camera that
     happens where lanes converge in the distance and boxes are small.
   - Consequence for Stage 2: never assume one id spans a whole manoeuvre.
@@ -39,7 +46,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import align, avdecode
+from . import align, avdecode, tracker
 from .budget import Budget
 from .config import CFG, WEIGHTS_DIR, PerceptionConfig, enforce_offline, seed_everything
 from .ffdecode import FFmpegFrameReader, FFmpegUnavailable, scaled_size
@@ -138,6 +145,25 @@ def build_track_kwargs(cfg: PerceptionConfig, device: str) -> dict:
     if cfg.half and device != "cpu":
         kwargs["half"] = True
     return kwargs
+
+
+def build_predict_kwargs(cfg: PerceptionConfig, device: str) -> dict:
+    """Arguments for model.predict() on the keyframe path: detection only,
+    tracking is done by src/tracker.py."""
+    kwargs = build_track_kwargs(cfg, device)
+    kwargs.pop("persist")
+    kwargs.pop("tracker")
+    return kwargs
+
+
+def _detections(res, sx: float, sy: float) -> "tracker.Detections":
+    """One predict() result as tracker input, boxes in native pixels."""
+    r = res[0] if isinstance(res, (list, tuple)) else res
+    boxes = getattr(r, "boxes", None)
+    if boxes is None or len(boxes) == 0:
+        return tracker.Detections(np.zeros((0, 4)), np.zeros(0), np.zeros(0))
+    xyxy = boxes.xyxy.cpu().numpy() * np.array([sx, sy, sx, sy], dtype=np.float32)
+    return tracker.Detections(xyxy, boxes.conf.cpu().numpy(), boxes.cls.cpu().numpy())
 
 
 def device_string() -> str:
@@ -327,11 +353,25 @@ def run_perception(video_path: str | Path,
             # Only the frames skip_frame lets through are decoded at all. The
             # budget projection goes by POSITION in the video (source frame
             # index), since the number of keyframes is not known up front.
+            #
+            # Detection is model.predict; tracking is src/tracker.py, ByteTrack
+            # with a motion-tolerant association. Stock ByteTrack (model.track)
+            # cannot link a walking pedestrian across 0.5 s.
+            predict_kwargs = build_predict_kwargs(cfg, device)
+            kf_tracker = None
             for idx, frame in av_reader.frames():
                 t_sec = idx / budget.fps if budget.fps else 0.0
                 _keep_for_alignment(frame, t_sec)
-                res = model.track(frame, **track_kwargs)
-                rows.extend(_rows_from_result(res, idx, t_sec, sx, sy))
+                det = _detections(model.predict(frame, **predict_kwargs), sx, sy)
+                if kf_tracker is None:
+                    # The real step is known from the second keyframe on.
+                    kf_tracker = tracker.make_tracker(
+                        cfg, int(round(0.5 * (budget.fps or 25.0))), budget.fps)
+                elif len(seen) == 1:
+                    tracker.set_step(kf_tracker, cfg, idx - seen[0], budget.fps)
+                for r in tracker.update(kf_tracker, det):
+                    rows.append(make_row(idx, t_sec, int(r[4]), int(r[6]), float(r[5]),
+                                         float(r[0]), float(r[1]), float(r[2]), float(r[3])))
                 last_t = t_sec
                 seen.append(idx)
                 processed += 1
@@ -388,7 +428,7 @@ def run_perception(video_path: str | Path,
 
     data = (np.vstack(rows).astype(np.float32) if rows
             else np.zeros((0, len(COLUMNS)), dtype=np.float32))
-    data = compute_kinematics(data, cfg.velocity_window)
+    data = compute_kinematics(data, cfg.velocity_window_samples(budget.fps, stride))
     pose = _combine_pose(align_matches, align_state, budget, verbose)
 
     table = TrackTable(

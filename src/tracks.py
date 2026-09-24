@@ -31,7 +31,7 @@ COLUMNS: tuple[str, ...] = (
     "conf",
     "x1", "y1", "x2", "y2",
     "gx", "gy",    # ground-contact point: bottom-centre of the box
-    "vx", "vy",    # px/sec, smoothed over PerceptionConfig.velocity_window
+    "vx", "vy",    # px/sec, smoothed over PerceptionConfig.velocity_window_sec
     "speed",       # hypot(vx, vy), px/sec
     "heading",     # atan2(vy, vx), radians, image space
 )

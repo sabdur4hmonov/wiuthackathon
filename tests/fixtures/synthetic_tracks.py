@@ -327,7 +327,8 @@ class TrackBuilder:
         data = (np.vstack(rows).astype(np.float32) if rows
                 else np.zeros((0, len(COLUMNS)), dtype=np.float32))
         # The real derivation, not a hand-written one.
-        data = compute_kinematics(data, CFG.perception.velocity_window)
+        data = compute_kinematics(
+            data, CFG.perception.velocity_window_samples(self.fps, self.frame_stride))
         return TrackTable(
             data=data, fps=self.fps, duration=self.duration,
             n_frames=self.n_frames, width=self.width, height=self.height,

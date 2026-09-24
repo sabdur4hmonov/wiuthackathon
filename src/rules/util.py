@@ -90,7 +90,11 @@ def runs_to_segments(frames: np.ndarray, flags: np.ndarray, fps: float,
             single-frame dropouts that a real detector produces constantly;
             without it every occlusion splits one event into two, and two
             half-length segments each score worse against tIoU 0.7 than one
-            whole one.
+            whole one. The gap is time WITHOUT evidence: two consecutive
+            samples are one frame_stride apart and have no gap between them.
+            (Counting the stride as gap cost 0.07 s at stride 2, but half a
+            second at keyframe rate, where one missed sample then split every
+            run under a 1 s allowance.)
         min_duration_sec: runs shorter than this are dropped.
 
     Returns closed (start_frame, end_frame) intervals.
@@ -108,7 +112,8 @@ def runs_to_segments(frames: np.ndarray, flags: np.ndarray, fps: float,
         return []
 
     fps = fps or 25.0
-    gap_frames = gap_sec * fps
+    step = max(1, int(frame_stride))
+    gap_frames = gap_sec * fps + step
     runs: list[list[int]] = []
     for i in idx:
         f = int(frames[i])
@@ -117,7 +122,6 @@ def runs_to_segments(frames: np.ndarray, flags: np.ndarray, fps: float,
         else:
             runs.append([f, f])
 
-    step = max(1, int(frame_stride))
     out = []
     for s, e in runs:
         # A run of one sample still covers a stride's worth of time.

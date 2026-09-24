@@ -733,3 +733,38 @@ def test_wrong_way_only_judges_painted_lanes(zones):
     mark = LaneMarking("m_sb", ((0.0, 0.0), (1.0, 1.0)), "dashed", ("ns_sb_outer",))
     marked = dataclasses.replace(zones, lane_markings=zones.lane_markings + (mark,))
     assert len(wrong_way_mod.detect(tracks, marked)) >= 1
+
+
+# ===========================================================================
+# sample rate: keyframe-only Stage 1 (0.5 s between samples)
+# ===========================================================================
+def test_direction_rules_are_silent_at_keyframe_rate(zones):
+    """At 0.5 s per sample a moving platoon aliases (the track hops back one
+    car per sample), so direction and speed are not trustworthy: the SAME
+    scenes that fire at stride 2 must stay silent at the keyframe step."""
+    for step, expect in ((2, True), (12, False)):          # 25 fps: 0.08 s, 0.48 s
+        b = TrackBuilder(duration=40.0, frame_stride=step)
+        (b.vehicle()
+          .start_at(point_in_lane("ns_nb_outer", 0.95), t=0.0)
+          .drive_to(point_in_lane("ns_nb_outer", 0.02), speed=90.0))
+        assert bool(wrong_way_mod.detect(b.build(), zones)) is expect
+
+        b = TrackBuilder(duration=60.0, frame_stride=step)
+        for lane_id in ("ns_nb_inner", "ns_nb_outer"):
+            _fill_lane(b, lane_id, 4, 0.72, 0.98, speed=10.0, duration=45.0)
+        assert bool(congestion_mod.detect(b.build(), zones)) is expect
+
+
+def test_a_single_missed_sample_does_not_split_a_run():
+    """One missing sample at a 15-frame step leaves 0.5 s without evidence,
+    inside a 1 s gap allowance: one run, not two."""
+    from src.rules.util import runs_to_segments
+
+    frames = np.arange(0, 15 * 8, 15)
+    flags = np.array([1, 1, 1, 0, 1, 1, 1, 1], dtype=bool)
+    assert runs_to_segments(frames, flags, 30.0, gap_sec=1.0, frame_stride=15) == [(0, 105)]
+    # ...and two missed samples (1.0 s without evidence) still bridge, three do not.
+    flags = np.array([1, 1, 0, 0, 1, 1, 1, 1], dtype=bool)
+    assert len(runs_to_segments(frames, flags, 30.0, gap_sec=1.0, frame_stride=15)) == 1
+    flags = np.array([1, 0, 0, 0, 1, 1, 1, 1], dtype=bool)
+    assert len(runs_to_segments(frames, flags, 30.0, gap_sec=1.0, frame_stride=15)) == 2

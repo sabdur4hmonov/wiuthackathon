@@ -47,6 +47,10 @@ from .zoneindex import zone_index
 def detect(tracks, zones, th: WrongWayThresholds | None = None
            ) -> list[FrameSegment]:
     th = th or TH.wrong_way
+
+    # Direction and speed need dense samples; see max_sample_sec.
+    if tracks.frame_stride / (tracks.fps or 25.0) > th.max_sample_sec:
+        return []
     if zones is None or len(tracks) == 0 or not zones.lanes:
         return []
 

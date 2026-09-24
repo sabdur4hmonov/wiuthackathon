@@ -143,13 +143,14 @@ class PerceptionConfig:
     # ======================================================================
     # DETECTOR SPEED KNOBS -- the three values to edit if Stage 1 is over
     # budget. Nothing else in the codebase hard-codes them; everything reads
-    # CFG.perception. Example fallback: imgsz=640, frame_stride=4.
+    # CFG.perception. Example fallback: imgsz=640.
     #
     # What changes when you flip them:
     #   * The perception cache key changes, so every clip re-runs Stage 1.
-    #   * ByteTrack's track_buffer is 30 PROCESSED frames, so its real-time
-    #     length scales with frame_stride: 2.0 s at stride 2 on 29.97 fps,
-    #     4.0 s at stride 4. Rules are written in seconds and do not care.
+    #   * Tracker settings below are in seconds / box heights and follow the
+    #     sample step. Rules are written in seconds; wrong_way and congestion
+    #     stay silent when samples are more than 0.2 s apart (aliasing, see
+    #     thresholds.WrongWayThresholds.max_sample_sec).
     #   * `weights` must name a file in weights/ that weights/download.sh
     #     also fetches -- the run is offline, and only yolo11s.pt is listed
     #     there today. tests/test_config.py fails if the two disagree.
@@ -166,7 +167,28 @@ class PerceptionConfig:
     iou: float = 0.70                # NMS IoU
     max_det: int = 300
     half: bool = True                # fp16 on CUDA, ignored on CPU
-    tracker: str = "bytetrack.yaml"
+    tracker: str = "bytetrack.yaml"  # cv2/ffmpeg fallback only (model.track)
+    # -- keyframe tracker (src/tracker.py), used with the pyav decoder -------
+    # ByteTrack with a motion-tolerant association for a 0.5 s sample period.
+    # Times are in SECONDS and converted to samples from the measured step, so
+    # these hold if skip_frame or the GOP changes.
+    track_buffer_sec: float = 2.0    # keep a lost track this long (CP3: 30 frames at stride 2 = 2.0 s)
+    track_high_thresh: float = 0.25  # first-stage detections
+    track_low_thresh: float = 0.10   # second-stage (ByteTrack's low-score pass)
+    new_track_thresh: float = 0.25
+    match_thresh: float = 0.80       # accept if similarity (* score, if fused) > 0.2
+    # Do NOT multiply similarity by detection confidence (stock ByteTrack
+    # does): a person at conf 0.45 then needs similarity > 0.65 to confirm a
+    # new track, which a walker moving 0.7 heights per sample never reaches.
+    # Measured on the four clips: coverage of CP3's pedestrians 79.8% -> 83%.
+    track_fuse_score: bool = False
+    # Reach, in box heights per sample, of the motion term. Over 0.5 s on the
+    # real clips pedestrians move 0.48 heights at p95, vehicles 1.78; people
+    # crossing mid-block move faster (0.7-0.9), hence 1.5 (swept 1.0/1.5/2.0:
+    # 1.5 recovers one more CP3 jaywalking event, 2.0 adds nothing).
+    track_reach_person: float = 1.5
+    track_reach_vehicle: float = 2.5
+    track_max_size_ratio: float = 1.5  # box height may change by this factor per sample
     # Frame source for Stage 1. "pyav" (default since CP4) decodes keyframes
     # only via the decoder's skip_frame (src/avdecode.py): ~0.18x realtime on
     # the 4K clips, against a full decode for cv2. Falls back to "cv2" when
@@ -204,8 +226,14 @@ class PerceptionConfig:
     # COCO ids we care about. 0 person, 1 bicycle, 2 car, 3 motorcycle,
     # 5 bus, 7 truck. Everything else is noise on a road camera.
     classes: tuple[int, ...] = (0, 1, 2, 3, 5, 7)
-    # Kinematics are smoothed over this many *processed* frames before vx/vy.
-    velocity_window: int = 5
+    # vx/vy are a centred difference over this much time (converted to
+    # samples by velocity_window_samples, never fewer than 2). 0.4 s is the
+    # CP0-CP3 value of 5 samples at stride 2 on 25 fps; at keyframe rate it
+    # is the minimum of 2 samples (+-0.5 s).
+    velocity_window_sec: float = 0.4
+
+    def velocity_window_samples(self, fps: float, step: int) -> int:
+        return max(2, int(round(self.velocity_window_sec * (fps or 25.0) / max(1, step))))
 
     def hash(self) -> str:
         blob = json.dumps(asdict(self), sort_keys=True).encode()

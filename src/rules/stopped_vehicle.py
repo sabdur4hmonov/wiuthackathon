@@ -134,7 +134,11 @@ def detect(tracks, zones, th: StoppedVehicleThresholds | None = None
     candidates = candidates[np.argsort(frames[candidates], kind="stable")]
 
     fps = veh.fps or 25.0
-    max_gap_frames = th.max_gap_sec * fps
+    step = max(1, veh.frame_stride)
+    # A gap is time WITHOUT evidence: consecutive samples are one step apart
+    # and have none. At keyframe rate (step 15) counting that step as gap
+    # would eat half a second of the allowance.
+    max_gap_frames = th.max_gap_sec * fps + step
 
     clusters: list[_Cluster] = []
     open_clusters: list[_Cluster] = []
@@ -166,7 +170,6 @@ def detect(tracks, zones, th: StoppedVehicleThresholds | None = None
             best.ids.add(tid)
             best.frames.add(f)
 
-    step = max(1, veh.frame_stride)
     rows_of: dict[int, np.ndarray] | None = None
     out: list[FrameSegment] = []
     for c in clusters:

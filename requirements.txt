@@ -9,10 +9,12 @@ torch>=2.2
 torchvision>=0.17
 ultralytics>=8.3.0
 
-# ByteTrack's linear assignment. Ultralytics prefers `lap` and falls back to
-# scipy.optimize.linear_sum_assignment when it is absent. scipy is required
-# because `lap` needs a C compiler and has no Windows wheel for 3.11+; `lap` is
-# left optional so the eval box can use it if it builds.
+# ByteTrack's linear assignment. REQUIRED: Ultralytics 8.4's tracker module
+# does `import lap` and, when it is missing, tries to pip-install it -- which
+# fails offline, so the tracker cannot even be imported (seen on a Python 3.14
+# env without lap: every video returned no events). lap 0.5.12+ ships wheels
+# for Windows and Linux, 3.8-3.13.
+lap>=0.5.12
 scipy>=1.11
 
 # Stage 1 decoder (src/avdecode.py): keyframe-only decode via skip_frame.

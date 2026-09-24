@@ -723,3 +723,60 @@ The frame index of each keyframe is `round((pts - start) * time_base * fps)`
 with the harness's fps. Verified against cv2 on sample_004 (keyframes land on
 frames 2, 17, 32, 47: each GOP opens with two B-frames in display order) and
 in `tests/test_avdecode.py` on an H.264 clip with 15-frame GOPs and B-frames.
+
+### Tracking at 0.5 s per sample (`src/tracker.py`)
+
+Measured on the full-rate CP3 tracks, 0.5 s apart, a moving pedestrian's box
+overlaps its own earlier box with IoU < 0.2 in 90-94% of cases (moving cars
+40-57%). Stock ByteTrack links on overlap alone, and confirms a new track only
+if its second detection overlaps the first, so at keyframe rate walkers were
+simply never tracked: replaying stock ByteTrack reproduced 4 of CP3's 10
+jaywalking events. Retuning the frame-counted numbers could not fix that.
+
+`KeyframeTracker` keeps ByteTrack (Kalman, two-stage association, Hungarian)
+and replaces its similarity with the larger of IoU and a motion term, `1 -
+centre distance / (reach x box height)`, gated to the same class group and a
+plausible size change. Settings are in seconds and box heights, converted from
+the measured sample step: `track_buffer_sec` 2.0 (CP3's 30 frames at stride 2),
+reach 1.5 heights for people, 2.5 for vehicles. Score fusion is off: stock
+ByteTrack multiplies similarity by confidence, which lowers the bar for a
+conf-0.45 pedestrian to a similarity of 0.65.
+
+Tuned by replaying the tracker over stored keyframe detections of all four
+clips (the same detector calls Stage 1 makes), scored against CP3:
+
+| association | CP3 people covered | links kept | CP3 events reproduced |
+|---|---|---|---|
+| IoU only (stock) | -- | -- | 4 / 10 |
+| motion term, score fused, reach 1.0 | 79.8% | 97.4% | 7 / 10 |
+| motion term, no fusion, reach 1.5 (**default**) | 82.2% | 96.5% | 8 / 10 |
+
+**What the keyframe rate cannot do: direction and speed.** In a platoon moving
+about one car-gap per 0.5 s the tracker hops back to the car behind each
+sample, and the track drifts backwards. On sample_002 at 0:46, real cars moved
+left at 550-680 px/s while keyframe tracks drifted right at 150-200 px/s in
+lanes NB1-NB3 -- 11-13 wrong_way events over the four clips, all false.
+`wrong_way` and `congestion` therefore stay silent unless samples are at most
+0.2 s apart (`max_sample_sec`); neither fired in CP3. `jaywalking` and
+`stopped_vehicle` are position-based and unaffected.
+
+**A sample-rate bug in the rules, fixed.** Gap-bridging measured sample to
+sample, so two consecutive samples counted one step as "no evidence": 0.07 s
+at stride 2, but 0.5 s at keyframe rate, where one missed sample then split
+every run under a 1 s allowance. Gaps are now time without evidence. At full
+rate CP3's events are unchanged (1/3/4/2).
+
+Jaywalking, keyframe rate vs CP3 (all four clips re-run through Stage 1):
+
+| clip | CP3 | keyframe | lost | new |
+|---|---|---|---|---|
+| sample_001 | 1 | 1 | -- | -- |
+| sample_002 | 3 | 3 | 02:51.4 (the moped-rider false positive) | 04:55.4 |
+| sample_003 | 4 | 3 | 02:51.9 | -- |
+| sample_004 | 2 | 2 | -- | -- |
+
+Both differences are threshold-edge cases, not tracking losses. The sample_003
+pedestrian stands at the one-body-height kerb margin; CP3 fired on samples
+alternating pass/fail, and at 2 samples/s only two isolated samples pass. The
+new sample_002 event is a person 1.74 s outside the zebra margin in CP3,
+under the 2 s minimum; four keyframe samples count as 2.0 s.
