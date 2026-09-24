@@ -213,3 +213,25 @@ def test_describe(cache_at, monkeypatch):
     assert "entries" in C.describe()
     monkeypatch.setenv(C.DISABLE_ENV_VAR, "1")
     assert "DISABLED" in C.describe()
+
+
+def test_video_hash_reads_only_the_head_and_tail(tmp_path):
+    """Hashing a whole 6 GB clip cost 7-20 s of the harness budget. The key is
+    size + first and last 1 MB: a change there misses, a change in the middle
+    of the file (never a different recording in practice) does not."""
+    base = bytearray(b"\x00" * (5 << 20))
+    paths = {}
+    for name, pos in (("orig", None), ("head", 10), ("tail", len(base) - 10),
+                      ("middle", len(base) // 2)):
+        b = bytearray(base)
+        if pos is not None:
+            b[pos] = 1
+        paths[name] = tmp_path / f"{name}.mp4"
+        paths[name].write_bytes(bytes(b))
+    key = {k: C.video_hash(p) for k, p in paths.items()}
+    assert key["head"] != key["orig"]
+    assert key["tail"] != key["orig"]
+    assert key["middle"] == key["orig"]            # proves the middle is not read
+    longer = tmp_path / "longer.mp4"
+    longer.write_bytes(bytes(base) + b"\x00")
+    assert C.video_hash(longer) != key["orig"]     # size is part of the key

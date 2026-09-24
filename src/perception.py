@@ -127,9 +127,9 @@ def _disable_amp_check(model) -> None:
 def build_track_kwargs(cfg: PerceptionConfig, device: str) -> dict:
     """Arguments for model.track(), assembled once per video.
 
-    `half` is only passed on CUDA. It is meaningless on CPU, and Ultralytics
-    8.4 deprecated the name in favour of `quantize` -- passing it regardless
-    would emit a warning on every single frame.
+    fp16 is only requested on CUDA (meaningless on CPU), and under whichever
+    name this Ultralytics understands: 8.4 renamed `half` to `quantize=16` and
+    warns on every call that still says `half` -- once per keyframe.
     """
     kwargs = {
         "persist": True,
@@ -143,8 +143,19 @@ def build_track_kwargs(cfg: PerceptionConfig, device: str) -> dict:
         "verbose": False,
     }
     if cfg.half and device != "cpu":
-        kwargs["half"] = True
+        kwargs.update(_fp16_kwarg())
     return kwargs
+
+
+def _fp16_kwarg() -> dict:
+    try:
+        from ultralytics.cfg import DEFAULT_CFG_DICT
+
+        if "quantize" in DEFAULT_CFG_DICT:
+            return {"quantize": 16}
+    except Exception:  # noqa: BLE001 - fall back to the old name
+        pass
+    return {"half": True}
 
 
 def build_predict_kwargs(cfg: PerceptionConfig, device: str) -> dict:
@@ -304,21 +315,19 @@ def run_perception(video_path: str | Path,
     loop_t0 = t_start
     expected = max(1, budget.n_frames // stride)
     # Camera-pose alignment (src/align.py) from frames this decode already
-    # has, matched as they arrive. Matching inside the loop -- not after it --
-    # is what charges its cost to the per-frame projection, so perception can
-    # never use up the budget that alignment then needs: an early version that
-    # matched at the end found no headroom left on every real clip.
+    # has, matched as they arrive. NEVER skipped for budget: without it the
+    # zones are off by up to ~150 px on a re-framed clip (8/21 probe points
+    # wrong on sample_003), and it costs a few hundred ms of SIFT per video.
+    # (An earlier version skipped it below 5 s of headroom, which on the 4K
+    # clips meant always.)
     align_at = align.sample_times(budget.duration)
     align_matches: list = []
-    align_state = {"skipped": 0, "sec": 0.0}
+    align_state = {"sec": 0.0}
 
     def _keep_for_alignment(frame, t_sec):
         if align_at and t_sec >= align_at[0]:
             while align_at and t_sec >= align_at[0]:
                 align_at.pop(0)
-            if budget.remaining_to_hard() < align.CFG_ALIGN.min_headroom_sec:
-                align_state["skipped"] += 1
-                return
             t_al = time.perf_counter()
             try:
                 align_matches.append(align.match_frame(align.prepare(frame)))
@@ -475,13 +484,12 @@ def run_perception(video_path: str | Path,
 def _combine_pose(matches: list, state: dict, budget: Budget,
                   verbose: bool) -> "align.Pose":
     """One pose from the per-frame matches made during the loop; IDENTITY when
-    none could be afforded or trusted. Combining is cheap: the matching already
+    none could be matched or trusted. Combining is cheap: the matching already
     happened, and was charged, inside the loop."""
     from dataclasses import replace
 
     if not matches:
-        reason = ("skipped: no budget headroom" if state["skipped"] else "no frames")
-        pose = replace(align.IDENTITY, reason=reason)
+        pose = replace(align.IDENTITY, reason="no frames")
     else:
         try:
             pose = align.estimate([], matches=matches)

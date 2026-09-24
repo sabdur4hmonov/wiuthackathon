@@ -275,3 +275,10 @@ def test_detect_events_calibrates_part_b_before_perception(clip, isolated_cache,
     probe_pos = err.index("Part B reserve calibrated")
     perception_pos = err.index("[perception]") if "[perception]" in err else len(err)
     assert probe_pos < perception_pos
+
+
+def test_part_a_leaves_no_handle_on_the_video(clip, isolated_cache):
+    """Nothing of ours may still hold the file when the harness's Part B starts:
+    on Windows an open capture or container makes the delete fail."""
+    detect_events(str(clip), verbose=False, use_cache=False)
+    clip.unlink()

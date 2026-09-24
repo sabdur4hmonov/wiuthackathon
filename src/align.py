@@ -49,10 +49,6 @@ class AlignConfig:
     # median over them ignores a short settle at the start (sample_001 drifts
     # 27.5 px @4K at t=0, 5 px by 10 s, <1 px after 33 s).
     frames: int = 9
-    # Alignment is skipped (identity) when Part A has less headroom than this:
-    # a few hundred ms of SIFT must never be what overruns a tiny clip.
-    min_headroom_sec: float = 5.0
-
     sift_features: int = 3000
     ratio: float = 0.75
     ransac_px: float = 2.0            # at MATCH_WIDTH

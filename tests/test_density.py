@@ -120,3 +120,21 @@ def test_headroom_is_none_without_a_measurement(clip):
     expected = (b.total_budget - b.duration * b.cfg.part_b_measured_safety
                 - b.safety_margin - b.elapsed()) / b.duration
     assert h == pytest.approx(expected, abs=0.05)
+
+
+def test_alignment_is_never_skipped_for_budget(clip, model):
+    b = _budget(clip)
+    b.force_stop("no time at all")
+    t = perception.run_perception(clip, b, verbose=False)
+    assert t.pose is not None
+    assert not t.pose["reason"].startswith("skipped")
+    assert t.pose["frames"] > 0                    # frames were matched in-loop
+
+
+def test_fp16_uses_the_current_ultralytics_name():
+    from src.config import CFG
+
+    kw = perception.build_track_kwargs(CFG.perception, "0")
+    assert "half" not in kw                        # deprecated: warns every call
+    assert kw.get("quantize") == 16
+    assert "quantize" not in perception.build_track_kwargs(CFG.perception, "cpu")

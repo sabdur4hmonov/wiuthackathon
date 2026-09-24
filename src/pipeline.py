@@ -50,9 +50,31 @@ def detect_events(video_path: str, verbose: bool = True,
               file=sys.stderr)
         events = []
 
+    _release_part_a()
     if verbose:
         print(budget.format_report(), file=sys.stderr)
     return events
+
+
+def _release_part_a() -> None:
+    """Leave nothing of ours competing with the harness's Part B decode.
+
+    Every capture and container is closed where it is opened (perception's
+    finally, measure_part_b_floor, align) and the ffmpeg pipe is stopped with
+    its reader; what survives a detect_events call is garbage and the CUDA
+    cache. The detector itself stays loaded for the next video.
+    """
+    import gc
+
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+    except Exception:  # noqa: BLE001 - cleanup must never cost the video
+        pass
 
 
 def _calibrate_part_b_reserve(video_path: str, budget: Budget,
@@ -149,13 +171,10 @@ def _align_zones(video_path: str, tracks: TrackTable, zones: Zones | None,
     """Warp zones.json onto this video's camera framing (see src/align.py).
 
     The pose normally rides on the tracks, estimated from frames Stage 1
-    decoded anyway. Tracks from a cache entry written before alignment existed
-    carry none, and Stage 1 may have had no room for it; only then are a few
-    frames decoded here, and the cost is charged to the budget. Any failure
-    leaves the zones unwarped.
+    decoded anyway. Tracks from an older cache entry may carry none, or a pose
+    skipped for budget before CP4; only then are a few frames decoded here,
+    regardless of budget. Any failure leaves the zones unwarped.
     """
-    from dataclasses import replace
-
     from . import align
 
     if zones is None:
@@ -164,12 +183,10 @@ def _align_zones(video_path: str, tracks: TrackTable, zones: Zones | None,
         pose = align.Pose.from_dict(tracks.pose)
         # No pose stored, or Stage 1 could not afford one: estimate it here if
         # there is room now.
+        # Never skipped for budget (see perception._keep_for_alignment).
         if pose is None or (pose.is_identity and pose.reason.startswith("skipped")):
-            if budget.remaining_to_hard() < align.CFG_ALIGN.min_headroom_sec:
-                pose = replace(align.IDENTITY, reason="skipped: no budget headroom")
-            else:
-                with budget.stage("align"):
-                    pose = align.estimate_from_video(video_path, budget.duration)
+            with budget.stage("align"):
+                pose = align.estimate_from_video(video_path, budget.duration)
         if verbose:
             align.log(pose)
         return align.warp_zones(zones, pose, tracks.width or zones.image_width)
