@@ -39,7 +39,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import align
+from . import align, avdecode
 from .budget import Budget
 from .config import CFG, WEIGHTS_DIR, PerceptionConfig, enforce_offline, seed_everything
 from .ffdecode import FFmpegFrameReader, FFmpegUnavailable, scaled_size
@@ -209,8 +209,26 @@ def run_perception(video_path: str | Path,
     # rescaling (authored_against vs the video actual size), so this must be
     # the size frames were actually decoded at, not the source file size.
     ff_reader = None
+    av_reader = None
     decoder_used = "cv2"
     cap = None
+    # Detector-frame -> native-pixel factor. Boxes are stored in NATIVE pixels
+    # whatever the decode size, so zones, box-height units and cached tracks
+    # all keep one coordinate frame.
+    sx = sy = 1.0
+
+    if cfg.decoder == "pyav":
+        try:
+            av_reader = avdecode.KeyframeReader(video_path, budget.fps,
+                                                cfg.skip_frame, cfg.imgsz)
+            width, height = av_reader.native_width, av_reader.native_height
+            sx, sy = av_reader.scale
+            decoder_used = f"pyav/{cfg.skip_frame}"
+        except Exception as e:  # noqa: BLE001 - never lose the run to the decoder
+            if verbose:
+                print(f"[perception] pyav decoder unavailable, falling back to "
+                      f"cv2: {e!r}", file=sys.stderr)
+            av_reader = None
 
     if cfg.decoder == "ffmpeg":
         try:
@@ -236,7 +254,7 @@ def run_perception(video_path: str | Path,
             ff_reader = None
             decoder_used = "cv2"
 
-    if ff_reader is None:
+    if ff_reader is None and av_reader is None:
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
             budget.note("perception", 0.0, "cannot open video")
@@ -279,6 +297,15 @@ def run_perception(video_path: str | Path,
                 pass
             align_state["sec"] += time.perf_counter() - t_al
 
+    def _project_by_position(frame_idx):
+        done = frame_idx + 1
+        if budget.project_overrun(done, budget.n_frames, loop_t0):
+            budget.force_stop(
+                f"projected overrun at frame {done}/{budget.n_frames} after "
+                f"{budget.elapsed():.1f}s, limit {budget.part_a_hard:.1f}s")
+            return True
+        return False
+
     def _should_stop_after(processed_count):
         """Shared budget check, invoked identically from either decode path."""
         if processed_count % _BUDGET_CHECK_EVERY != 0:
@@ -293,8 +320,25 @@ def run_perception(video_path: str | Path,
             return True
         return False
 
+    seen: list[int] = []
+
     try:
-        if ff_reader is not None:
+        if av_reader is not None:
+            # Only the frames skip_frame lets through are decoded at all. The
+            # budget projection goes by POSITION in the video (source frame
+            # index), since the number of keyframes is not known up front.
+            for idx, frame in av_reader.frames():
+                t_sec = idx / budget.fps if budget.fps else 0.0
+                _keep_for_alignment(frame, t_sec)
+                res = model.track(frame, **track_kwargs)
+                rows.extend(_rows_from_result(res, idx, t_sec, sx, sy))
+                last_t = t_sec
+                seen.append(idx)
+                processed += 1
+                if processed % _BUDGET_CHECK_EVERY == 0 and (
+                        budget.should_stop() or _project_by_position(idx)):
+                    break
+        elif ff_reader is not None:
             # Every source frame arrives already scaled; unlike cv2 grab-only
             # skip, a frame we do not process still cost a decode+scale+pipe
             # write, since ffmpeg cannot cheaply skip that work mid-pipe the
@@ -334,6 +378,13 @@ def run_perception(video_path: str | Path,
             cap.release()
         if ff_reader is not None:
             ff_reader.__exit__(None, None, None)
+        if av_reader is not None:
+            av_reader.close()
+
+    if len(seen) >= 2:
+        # The sample step actually achieved (the GOP for NONKEY). Rules use it
+        # as "how much time one sample covers".
+        stride = max(1, int(np.median(np.diff(seen))))
 
     data = (np.vstack(rows).astype(np.float32) if rows
             else np.zeros((0, len(COLUMNS)), dtype=np.float32))
@@ -381,13 +432,16 @@ def _combine_pose(matches: list, state: dict, budget: Budget,
     return pose
 
 
-def _rows_from_result(res, frame_idx: int, t_sec: float) -> list[np.ndarray]:
+def _rows_from_result(res, frame_idx: int, t_sec: float,
+                      sx: float = 1.0, sy: float = 1.0) -> list[np.ndarray]:
     """Flatten one Ultralytics result into track rows.
 
     Detections the tracker did not adopt are kept with track_id = -1 rather than
     dropped: a stopped_vehicle or road_obstacle can sit untracked for a long
     time, and throwing the evidence away at Stage 1 would make that class
     undetectable no matter what Stage 2 does.
+
+    (sx, sy) scale detector-frame coordinates back to native pixels.
     """
     out: list[np.ndarray] = []
     if not res:
@@ -407,5 +461,5 @@ def _rows_from_result(res, frame_idx: int, t_sec: float) -> list[np.ndarray]:
     for k in range(len(xyxy)):
         x1, y1, x2, y2 = (float(v) for v in xyxy[k])
         out.append(make_row(frame_idx, t_sec, int(ids[k]), int(cls[k]),
-                            float(conf[k]), x1, y1, x2, y2))
+                            float(conf[k]), x1 * sx, y1 * sy, x2 * sx, y2 * sy))
     return out

@@ -156,7 +156,10 @@ class PerceptionConfig:
     # ======================================================================
     weights: str = "yolo11s.pt"      # model variant (yolo11n / s / m ...)
     imgsz: int = 960                 # detector input size; CCTV objects are small, 640 loses them
-    frame_stride: int = 2            # process every Nth decoded frame
+                                     # (the pyav decoder also downscales to this width)
+    skip_frame: str = "NONKEY"       # pyav: NONKEY = keyframes only (every 0.5 s on
+                                     # the real clips), NONREF = I+P (10/s)
+    frame_stride: int = 2            # cv2/ffmpeg fallback only: every Nth frame
     # ======================================================================
 
     conf: float = 0.20               # low: ByteTrack's second stage uses the tail
@@ -164,8 +167,13 @@ class PerceptionConfig:
     max_det: int = 300
     half: bool = True                # fp16 on CUDA, ignored on CPU
     tracker: str = "bytetrack.yaml"
-    # Frame source for Stage 1. "cv2" (default, KEEP THIS) is cv2.VideoCapture
-    # grab/retrieve, the CP0 path. "ffmpeg" pipes through an ffmpeg subprocess
+    # Frame source for Stage 1. "pyav" (default since CP4) decodes keyframes
+    # only via the decoder's skip_frame (src/avdecode.py): ~0.18x realtime on
+    # the 4K clips, against a full decode for cv2. Falls back to "cv2" when
+    # PyAV is missing or cannot open the file.
+    #
+    # "cv2" is cv2.VideoCapture grab/retrieve, the CP0 path: grab() still
+    # decodes every frame. "ffmpeg" pipes through an ffmpeg subprocess
     # that scales inside the decoder (src/ffdecode.py), built on the
     # hypothesis that scaling INSIDE the decoder would beat decoding full
     # 4K/10-bit and letting the detector resize it away.
@@ -187,7 +195,7 @@ class PerceptionConfig:
     # be worth revisiting for a different codec/resolution or with a
     # `select` filter added to skip full processing on non-stride frames.
     # DO NOT default this to "ffmpeg" without re-measuring first.
-    decoder: str = "cv2"
+    decoder: str = "pyav"
     # Target width for the ffmpeg decoder's own scale filter (height follows
     # the source aspect ratio, rounded to even). Chosen above `imgsz` so the
     # detector's own letterboxing/resize still has real pixels to work from,

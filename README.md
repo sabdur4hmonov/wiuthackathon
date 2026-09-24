@@ -688,3 +688,38 @@ Every GOP is exactly 15 frames, with no variation, in display order
 (pts != dts). A keyframe arrives every 0.5 s -- 2 samples per second -- well
 under the ~1 s where tracking would break, so keyframes-only (`NONKEY`) is
 the primary mode. `NONREF` would decode I+P, 10 samples per second.
+
+### Part A decodes keyframes only (`src/avdecode.py`)
+
+Stage 1 now decodes through PyAV with `skip_frame = "NONKEY"`: FFmpeg drops
+every non-keyframe before decoding it, and the frame is downscaled to the
+detector width inside the reformat step (AREA filter, ~9 ms/frame). Boxes are
+scaled back to native pixels, so zones, box-height units and the rules see
+the same coordinate frame as before. cv2 remains the fallback if PyAV is
+missing or cannot open the file.
+
+**Frame threading defeats skip_frame.** With `thread_type = "AUTO"` FFmpeg
+picks frame threads, and every frame thread decodes its packet whatever
+skip_frame says: NONKEY cost 0.61x realtime that way, against 0.14x with
+slice threading or none. The reader uses SLICE and a test pins it.
+
+Full-clip Part A decode cost, 8-core box, keyframes + downscale to 960, no
+inference:
+
+| clip | keyframes | wall | x realtime |
+|---|---|---|---|
+| sample_001 | 680 | 40.1 s | 0.118 |
+| sample_002 | 635 | 39.0 s | 0.123 |
+| sample_003 | 635 | 38.9 s | 0.122 |
+| sample_004 | 255 | 13.7 s | 0.107 |
+
+A first, cold-cache pass measured 0.27x on sample_001 (the 6 GB file coming
+off disk). A run on sample_003 once stalled for 77 minutes, most likely the machine sleeping; its
+immediate rerun measured 0.114x with no gap over 0.47 s between frames.
+Compared with the full decode (~2.3-2.5x), Part A's decode is now about a
+twentieth of Part B's.
+
+The frame index of each keyframe is `round((pts - start) * time_base * fps)`
+with the harness's fps. Verified against cv2 on sample_004 (keyframes land on
+frames 2, 17, 32, 47: each GOP opens with two B-frames in display order) and
+in `tests/test_avdecode.py` on an H.264 clip with 15-frame GOPs and B-frames.
