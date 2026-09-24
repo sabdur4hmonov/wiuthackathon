@@ -1,35 +1,144 @@
-# WIUT Hackathon 2026 — CV Track
+# WIUT Hackathon 2026 — CV Track: traffic events and accident anticipation
 
-Traffic event detection (Part A) and causal accident anticipation (Part B) from
-a fixed road camera.
+From a fixed road camera: **Part A** detects traffic events (jaywalking,
+stopped vehicle, wrong way, congestion) as `[start, end, label]` segments;
+**Part B** outputs a causal per-frame accident-risk score. Built for the
+organizers' harness (`run_submission.py`, `evaluate.py`, both unchanged) and
+its 3x-realtime budget for Part A + Part B together, offline.
 
-**Status: CP1 — four rule classes implemented against synthetic fixtures.**
-The foundation (budget manager, perception pass, cache, zone tooling) is from
-CP0. `congestion`, `stopped_vehicle`, `jaywalking` and `wrong_way` are now
-implemented and tested, plus an HSV traffic-light classifier and a ground-truth
-labelling tool. **No real footage has been seen yet**: `config/zones.json` is
-still un-authored, so the rules receive `zones=None` and emit nothing, and every
-threshold is a placeholder. See [Current state](#current-state).
+**Team:** `<TEAM NAME>` — `<name 1>` (`<role / what they did>`),
+`<name 2>` (`<role>`), `<name 3>` (`<role>`). Website: `<URL>`.
+Live demo: https://wiuthackathon-gerwwm75st8xkhkapprvc79.streamlit.app -- upload a clip (up to 120 s / 200 MB) and get events, an annotated playback and the risk curve (Streamlit Community Cloud, CPU; see [demo/README.md](demo/README.md)).
 
 ---
 
-## Quickstart
+## Install and run
+
+Python 3.10-3.12. On a GPU box install the CUDA build of torch first
+(`pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121`).
 
 ```bash
 python -m venv .venv && .venv/Scripts/activate   # Linux/macOS: source .venv/bin/activate
 pip install -r requirements.txt
-bash weights/download.sh                          # once, with internet
-python run_submission.py --videos samples --out predictions_samples.json --team <team>
-python evaluate.py --pred predictions_samples.json --validate-only
+bash weights/download.sh     # verifies the committed weights/yolo11s.pt (sha256); fetches it only if missing/corrupt
+python scripts/offline_check.py                   # proves the pipeline runs with every outbound socket blocked
+python run_submission.py --videos samples --out predictions.json --team <team>
+python evaluate.py --pred predictions.json --validate-only
+python evaluate.py --pred predictions.json --gt labels/ground_truth.json --per-video   # with labels
 ```
 
-With your own labels:
+`weights/yolo11s.pt` (19 MB) is committed, so a clone runs offline as is;
+`download.sh` checks its sha256 and re-fetches only a missing or corrupt file.
+`requirements.txt` was verified to install cleanly from a local wheelhouse
+with `--no-index` into a fresh venv (av, lap, imageio-ffmpeg included).
 
-```bash
-python evaluate.py --pred predictions_samples.json --gt my_labels.json --per-video
+## Architecture
+
 ```
+video ─┬─ Part B probe: time 3 short cv2 reads -> how much of the 3x budget Part B's decode needs
+       │
+       ├─ STAGE 1  src/perception.py           (the only stage that touches pixels)
+       │    PyAV, keyframes only (skip_frame=NONKEY; one frame per 0.5 s on the test camera)
+       │    -> YOLO11s @960 (COCO-pretrained)  -> KeyframeTracker (ByteTrack + motion term)
+       │    -> camera-pose alignment of zones.json, from the same frames (src/align.py)
+       │    = a tracks table (cached for development only)
+       ├─ STAGE 2  src/rules/                  tracks + aligned zones -> raw segments
+       │    jaywalking, stopped_vehicle (+ wrong_way, congestion when samples <= 0.2 s apart)
+       └─ STAGE 3  src/postprocess.py          merge, de-blip, no same-class overlap -> events
+
+harness frames ── Part B  src/risk/estimator.py  (causal: only frames step() has seen)
+       own YOLO11s @640 at 5 Hz -> own tracker -> time-to-collision between road users
+       -> risk = 0.5 ** (TTC / 1 s); a self-timing guard stops the work before it can
+          threaten the budget
+```
+
+Budget policy: the keyframe pass always completes (~0.1-0.3x realtime decode
+plus inference); denser decoding is bought only if the measured Part B leaves
+room. Details and measurements: [CP4](#cp4-keyframe-only-part-a-2026-09-24).
+
+## Part B: the risk score, and its guard
+
+`src/risk/estimator.py` is strictly causal: it sees only the frames the harness
+hands to `step()`, runs its own YOLO11s (640 px) every 6th frame (5 Hz) and its
+own tracker, and scores time-to-collision between vehicle-vehicle and
+vehicle-pedestrian pairs: `risk = 0.5 ** (TTC / 0.5 s)`, held for 3 samples.
+Nothing from Part A, no video file -- `tests/test_risk_isolation.py` enforces
+it structurally.
+
+**The guard.** Part B's harness decode is already our largest cost (1.2-3.0x
+realtime on the 4-core dev laptop). The estimator stops its own work for the
+rest of a video once that work passes 0.12x of the duration, or once Part B's
+projected wall time passes 2.3x; then it returns 0. Measured on all four
+clips through the harness loop: Part B 1.05-1.51x, our work 0.067-0.121x. On
+this CPU the guard trips on every clip (detection ~0.15-0.5 s per sample); on
+a T4 the work is ~20-30 ms per sample and it would run the whole clip.
+
+**Uncalibrated, deliberately quiet.** The sample clips contain no accident, so
+only the false-alarm rate could be measured: 0 alarms on all four clips with
+the guard off (max score 0.20-0.42), after a first setting raised 54. Every
+term of Score_B is >= 0, so a signal cannot score below the constant 0 it
+replaced.
+
+## What is learned and what is rule-based
+
+| component | kind |
+|---|---|
+| object detector (YOLO11s) | **learned** -- COCO-pretrained weights, used as is (no fine-tuning) |
+| tracker association | rule-based: ByteTrack (Kalman + Hungarian) with a hand-designed motion term |
+| camera alignment | classical CV: SIFT + RANSAC similarity against a reference frame |
+| scene geometry (lanes, crossings, queue zones, directions) | hand-authored `config/zones.json`; lane directions from optical flow |
+| the four event classes | rule-based, thresholds in `src/thresholds.py` (each with a calibration note) |
+| risk score | analytic time-to-collision on our own detections |
+| budget, decode, post-processing | engineering |
+
+No model was trained. There were no labels for the real clips until our own
+review (`labels/`); every threshold is biased toward NOT firing, because under
+macro F1 a wrong class costs as much as a missed one.
+
+## Models, data and licences
+
+| what | licence |
+|---|---|
+| Ultralytics YOLO11s weights (`yolo11s.pt`, v8.3.0 assets release), COCO-pretrained | AGPL-3.0 |
+| COCO (the weights' pretraining data; we use no training data ourselves) | CC BY 4.0 |
+| ByteTrack (Ultralytics implementation, subclassed) | AGPL-3.0 (Ultralytics); original ByteTrack MIT |
+| PyAV (bundles FFmpeg) | BSD-3-Clause (FFmpeg: LGPL-2.1+) |
+| OpenCV | Apache-2.0 |
+| imageio-ffmpeg (bundled ffmpeg binary) | BSD-2-Clause (binary: LGPL/GPL build) |
+| lap, scipy, numpy | BSD |
+| Gradio (demo only) | Apache-2.0 |
+| Sample clips | the organizers'; not redistributed (`samples/*.mp4` is git-ignored) |
+
+Because YOLO11 is AGPL-3.0, the demo Space is published under AGPL-3.0.
+
+## Determinism
+
+`src/config.seed_everything()` fixes `PYTHONHASHSEED`, `random`, `numpy`,
+`torch` and CUDA seeds, turns on deterministic torch algorithms and
+`cudnn.deterministic`, and disables `cudnn.benchmark`; it runs at import of
+`solution.py` and at the start of every `detect_events`. The tracker, rules and
+post-processing are deterministic given the detections. Checked: re-running
+Part A on all four sample clips reproduces the events in
+`predictions_samples.json` exactly.
+
+One deliberate exception: **how much of a clip Part B scores depends on the
+machine's speed.** Its self-timing guard stops the risk work on wall-clock
+grounds (to protect the budget), so a slower or busier machine stops earlier
+and the rest of that clip's curve is 0. Given the same frames processed, the
+scores are deterministic.
+
+## Results on the sample clips
+
+`predictions_samples.json` (harness output), `labels/` (our labels and the
+review tool), `site_assets/` (annotated videos, event clips, risk curves,
+EDA, failure cases -- see [site_assets/README.md](site_assets/README.md)).
 
 ---
+
+# Development log
+
+Everything below is the chronological engineering record (CP0 -> CP4). Early
+sections describe the state at the time they were written.
 
 ## Layout
 
@@ -45,6 +154,10 @@ src/
   zones.py               zones.json loader, validator, scene queries
   tracks.py              the tracks table schema
   cache.py               perception cache (dev tool; never a correctness dependency)
+  avdecode.py            keyframe-only decode through PyAV (Stage 1's frame source)
+  tracker.py             ByteTrack with a motion-tolerant association, for 0.5 s samples
+  yolo.py                detector helpers shared by Stage 1 and Part B (no pipeline imports)
+  align.py               per-video camera-pose alignment of zones.json
   perception.py          STAGE 1: video -> tracks
   thresholds.py          EVERY rule threshold, each with a calibration note
   signal.py              traffic-light ROI -> red / amber / green / unknown
@@ -53,7 +166,7 @@ src/
     zoneindex.py         vectorised zone membership for a whole table
   postprocess.py         STAGE 3: merge, de-blip, guarantee no same-class overlap
   pipeline.py            Part A orchestration
-  risk/                  STAGE B: causal estimator, ISOLATED from everything above
+  risk/                  PART B: causal time-to-collision estimator, ISOLATED from everything above
 tools/
   extract_frames.py      dump frames to annotate against
   annotate.html          click zones onto a frame, download zones.json (zero setup)
@@ -62,6 +175,13 @@ tools/
   label.html             scrub a clip, mark [start, end, class], export GT
   bench.py               seconds-per-video-second, per stage
   make_synthetic_clip.py throwaway clip for timing before real samples exist
+  gop_probe.py           keyframe interval / B-frames of a clip
+  review_candidates.py   candidate events + scan windows -> review page (review.html)
+  scan_windows.py        search aid for manual review (NOT a rule)
+  build_site_assets.py   annotated videos, event clips, risk/EDA data -> site_assets/
+demo/                    Hugging Face Space (Gradio): live demo of the pipeline
+labels/                  our labels for the sample clips + how they were made
+site_assets/             website results and EDA (see its README)
 scripts/offline_check.py proves the pipeline completes with the network blocked
 weights/download.sh      fetch weights once, before the offline run
 tests/                   unit + end-to-end-through-the-real-harness
@@ -300,16 +420,6 @@ without it.
 
 ---
 
-## Determinism
-
-`src/config.seed_everything()` fixes `PYTHONHASHSEED`, `random`, `numpy`,
-`torch`, CUDA, `cudnn.deterministic`, and disables `cudnn.benchmark`. Called at
-import of `solution.py` and again at the start of every `detect_events`.
-`tests/test_harness_contract.py::test_detect_events_is_deterministic` asserts
-two runs agree.
-
----
-
 ## Current state
 
 | CP0 deliverable | status |
@@ -381,15 +491,6 @@ sign would not crash, it would silently invert a rule), the budget limits and
 degradation path, the zones validator, the cache's failure modes, the causality
 isolation, and an end-to-end run through the **real, unmodified**
 `run_submission.py` and `evaluate.py`.
-
-## Licences
-
-- **Ultralytics YOLO11** — AGPL-3.0. Weights from the Ultralytics assets
-  release, COCO-pretrained.
-- No external training datasets used at CP0. Any added later will be listed here
-  with its licence, as the task requires.
-
----
 
 ## Timing
 
