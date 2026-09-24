@@ -75,3 +75,14 @@ the weights go through LFS automatically). The first build takes ~5-10 min
 Space files: `space_README.md` (card + config: Gradio SDK, AGPL-3.0 because
 Ultralytics YOLO11 is AGPL-3.0), `requirements.txt` (CPU torch wheel index),
 `packages.txt` (libGL for OpenCV).
+
+## Streamlit Community Cloud (the live deployment)
+
+`demo/streamlit_test.py` is the entrypoint; Community Cloud installs
+`demo/requirements.txt` (the file next to the entrypoint) and apt packages from
+the repo-ROOT `packages.txt` (it does not read `demo/packages.txt`). That file
+must list bare package names only -- no comments. It installs `libgl1` and
+`libglib2.0-0`: Ultralytics pulls in the GUI build of OpenCV next to the
+headless one, and without libGL `import cv2` fails ("libGL.so.1: cannot open
+shared object file") -- which is what the first live upload hit. The sidebar
+"Run self-test" checks all of this on the server.

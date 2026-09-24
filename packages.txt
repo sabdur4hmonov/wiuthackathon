@@ -1,6 +1,2 @@
-# System packages for Streamlit Community Cloud (it reads this file from the repo
-# root, not from demo/). Ultralytics pulls in the GUI build of OpenCV, whose
-# cv2 needs libGL and glib: without them "import cv2" fails with
-# libGL.so.1 missing. The submission itself does not use this file.
 libgl1
 libglib2.0-0
