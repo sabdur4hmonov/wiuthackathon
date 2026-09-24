@@ -1,0 +1,29 @@
+[
+ {
+  "id": "moped_rider",
+  "clip": "sample_002",
+  "start": 169.4,
+  "end": 175.9,
+  "title": "A moped rider flagged as a jaywalker (CP3)",
+  "what": "The full-rate CP3 pipeline reported a jaywalking event here. It is a moped rider: the detector boxed the person but not the moped, so the 'person inside a vehicle box' rider test had nothing to test against.",
+  "status": "The keyframe pipeline no longer reports it -- but only because fewer samples fall past the 2 s minimum, not because it now understands riders. The same miss-boxed rider can still fire."
+ },
+ {
+  "id": "far_kerb_pedestrians",
+  "clip": "sample_001",
+  "start": 173.7,
+  "end": 180.2,
+  "title": "Pedestrians at the far kerb are too small to judge",
+  "what": "People on the far side of the avenue are under ~30 px tall at 960 px. Their ground point jitters across the kerb line by more than the one-body-height margin the jaywalking rule demands, so the rule is either silent (as here) or fires on someone standing on the pavement.",
+  "status": "Kept quiet on purpose (biased toward not firing). A real far-side jaywalker can be missed."
+ },
+ {
+  "id": "platoon_aliasing",
+  "clip": "sample_002",
+  "start": 44.0,
+  "end": 56.0,
+  "title": "Why wrong-way detection is off at keyframe rate",
+  "what": "Stage 1 samples one frame every 0.5 s. A platoon of cars moving about one car-gap per sample aliases: the tracker hops back to the car behind each sample, and the track drifts BACKWARDS (150-200 px/s the wrong way, while the real cars move at 550-680 px/s). That produced 11-13 false wrong-way events over the four clips.",
+  "status": "wrong_way and congestion only run when samples are <= 0.2 s apart (the optional dense mode); at keyframe rate they stay silent."
+ }
+]

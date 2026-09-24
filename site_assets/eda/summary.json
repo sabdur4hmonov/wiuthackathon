@@ -1,0 +1,102 @@
+[
+ {
+  "clip": "sample_001",
+  "duration_sec": 340.3,
+  "tracks": 782,
+  "detections_per_sample": 38.4,
+  "by_class_tracks": {
+   "person": 312,
+   "bicycle": 0,
+   "car": 446,
+   "motorcycle": 5,
+   "bus": 30,
+   "truck": 84
+  },
+  "pose": {
+   "scale": 0.9999521735658363,
+   "angle_deg": -0.0011988330926635399,
+   "tx": -0.10708649311405637,
+   "ty": 0.07727791260053511,
+   "good_frames": 9,
+   "frames": 9,
+   "median_inliers": 1141,
+   "drift_px": 6.52,
+   "reason": "aligned"
+  }
+ },
+ {
+  "clip": "sample_002",
+  "duration_sec": 317.8,
+  "tracks": 753,
+  "detections_per_sample": 39.4,
+  "by_class_tracks": {
+   "person": 313,
+   "bicycle": 1,
+   "car": 422,
+   "motorcycle": 9,
+   "bus": 21,
+   "truck": 38
+  },
+  "pose": {
+   "scale": 0.9999945353588462,
+   "angle_deg": -0.0003100217868953527,
+   "tx": 0.09265938525520066,
+   "ty": -0.033008638400694866,
+   "good_frames": 9,
+   "frames": 9,
+   "median_inliers": 1099,
+   "drift_px": 0.28,
+   "reason": "aligned"
+  }
+ },
+ {
+  "clip": "sample_003",
+  "duration_sec": 317.8,
+  "tracks": 957,
+  "detections_per_sample": 43.4,
+  "by_class_tracks": {
+   "person": 427,
+   "bicycle": 2,
+   "car": 497,
+   "motorcycle": 8,
+   "bus": 43,
+   "truck": 91
+  },
+  "pose": {
+   "scale": 1.014246422105689,
+   "angle_deg": -0.7575461735932836,
+   "tx": -30.69732007698075,
+   "ty": 17.9353123965931,
+   "good_frames": 9,
+   "frames": 9,
+   "median_inliers": 95,
+   "drift_px": 1.95,
+   "reason": "aligned"
+  }
+ },
+ {
+  "clip": "sample_004",
+  "duration_sec": 127.6,
+  "tracks": 393,
+  "detections_per_sample": 40.7,
+  "by_class_tracks": {
+   "person": 172,
+   "bicycle": 10,
+   "car": 191,
+   "motorcycle": 4,
+   "bus": 28,
+   "truck": 30
+  },
+  "pose": {
+   "scale": 1.0138423061084683,
+   "angle_deg": -1.0579912140833045,
+   "tx": -8.254945643775429,
+   "ty": 10.491466806397222,
+   "good_frames": 9,
+   "frames": 9,
+   "median_inliers": 128,
+   "drift_px": 0.83,
+   "reason": "aligned"
+  }
+ }
+]

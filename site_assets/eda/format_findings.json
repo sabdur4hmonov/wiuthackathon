@@ -1,0 +1,116 @@
+{
+ "footage": {
+  "container": "MP4 (Sony XAVC)",
+  "codec": "H.264 High 4:2:2 profile, Long-GOP (15 frames), 10-bit (yuv422p10le)",
+  "resolution": "3840x2160",
+  "fps": 29.97,
+  "bitrate_mbps": 147,
+  "clips": {
+   "sample_001": {
+    "sec": 340.3,
+    "frames": 10200,
+    "gb": 6.24
+   },
+   "sample_002": {
+    "sec": 317.8,
+    "frames": 9525,
+    "gb": 5.84
+   },
+   "sample_003": {
+    "sec": 317.8,
+    "frames": 9525,
+    "gb": 5.84
+   },
+   "sample_004": {
+    "sec": 127.6,
+    "frames": 3825,
+    "gb": 2.35
+   }
+  },
+  "browsers_can_play": false
+ },
+ "gop": {
+  "length_frames": 15,
+  "length_sec": 0.501,
+  "fixed": true,
+  "display_order": "BBI BBP BBP BBP BBP (1 I, 4 P, 10 B per GOP)",
+  "b_frames": true,
+  "tool": "tools/gop_probe.py"
+ },
+ "camera_pose": {
+  "note": "Same camera, re-framed between recordings",
+  "sample_003": "shift (-123, +72) px at 4K, scale 1.014, rotation -0.76 deg",
+  "sample_004": "shift (-33, +42) px at 4K, scale 1.014, rotation -1.08 deg",
+  "sample_001/002": "identity (the reference pose)"
+ },
+ "measured_costs_x_realtime": {
+  "machine": "4-core laptop i7-1065G7 (8 threads, 15 W; throttles under sustained load)",
+  "full_decode_cv2_part_b": {
+   "sample_001": 1.24,
+   "sample_002": 1.45,
+   "sample_003": [
+    2.98,
+    1.92
+   ],
+   "sample_004": 1.21,
+   "note": "harness-measured; sample_003 twice (throttled / not)"
+  },
+  "keyframe_decode_part_a": {
+   "sample_001": 0.118,
+   "sample_002": 0.123,
+   "sample_003": 0.122,
+   "sample_004": 0.107,
+   "cold_disk_first_read": 0.27
+  },
+  "keyframe_decode_with_frame_threads": 0.61,
+  "cpu_yolo_per_keyframe_sec": [
+   0.41,
+   0.59
+  ],
+  "tracker_per_keyframe_ms": 5,
+  "alignment_per_clip_sec": 1.5,
+  "part_b_probe_sec": [
+   5,
+   7
+  ],
+  "cache_key_ms": [
+   3,
+   7
+  ],
+  "budget": "3.0x realtime for Part A + Part B together; overrun wipes both"
+ },
+ "decisions": [
+  {
+   "finding": "Part B's harness decode of the 4K 10-bit file alone costs 1.2-3.0x realtime",
+   "decision": "Part A must not decode every frame too: two full decodes cannot fit in 3x."
+  },
+  {
+   "finding": "Fixed 15-frame GOP: a keyframe every 0.5 s",
+   "decision": "Stage 1 decodes keyframes only (PyAV skip_frame=NONKEY): 0.11-0.12x instead of a full decode."
+  },
+  {
+   "finding": "Frame threading (thread_type AUTO) decodes every packet regardless of skip_frame (0.61x vs 0.14x)",
+   "decision": "Slice threading in src/avdecode.py; a test pins it."
+  },
+  {
+   "finding": "0.5 s apart, a walking pedestrian's box does not overlap its earlier box (IoU < 0.2 in 90-94%)",
+   "decision": "Own ByteTrack association with a motion term (src/tracker.py): 4/10 -> 8/10 CP3 jaywalking events reproduced."
+  },
+  {
+   "finding": "At 2 samples/s platoons of cars alias: tracks drift backwards",
+   "decision": "wrong_way and congestion only run with samples <= 0.2 s apart (optional dense mode)."
+  },
+  {
+   "finding": "A starved Part A scores the same as a wiped video",
+   "decision": "The keyframe baseline always completes; the Part B probe (median of 3) only buys optional density."
+  },
+  {
+   "finding": "The camera is re-framed between recordings (up to ~150 px)",
+   "decision": "zones.json is aligned to each clip (SIFT similarity against a reference frame) inside the keyframe pass."
+  },
+  {
+   "finding": "Hashing a whole 6 GB clip for the cache key took 7-20 s of the budget",
+   "decision": "Key = size + first/last 1 MB (3-7 ms)."
+  }
+ ]
+}

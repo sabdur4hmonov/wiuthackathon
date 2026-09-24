@@ -1,0 +1,16 @@
+{
+ "clip": "sample_004.mp4",
+ "duration_sec": 127.627,
+ "events": [
+  [
+   19.086,
+   25.092,
+   "jaywalking"
+  ],
+  [
+   26.593,
+   33.6,
+   "jaywalking"
+  ]
+ ]
+}
