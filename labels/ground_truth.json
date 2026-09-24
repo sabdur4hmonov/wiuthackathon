@@ -1,0 +1,194 @@
+{
+ "sample_001.mp4": {
+  "duration": 340.34,
+  "fps": 29.97,
+  "events": [
+   [
+    110.377,
+    116.683,
+    "jaywalking"
+   ],
+   [
+    167.734,
+    170.237,
+    "jaywalking"
+   ],
+   [
+    175.742,
+    178.245,
+    "jaywalking"
+   ],
+   [
+    180.247,
+    185.252,
+    "jaywalking"
+   ],
+   [
+    240.307,
+    243.31,
+    "jaywalking"
+   ],
+   [
+    38.105,
+    108.675,
+    "stopped_vehicle"
+   ],
+   [
+    115.682,
+    151.218,
+    "stopped_vehicle"
+   ]
+  ],
+  "approximate": false,
+  "source": "tools/review.html: pipeline + seed candidates confirmed or corrected by a person, plus added misses"
+ },
+ "sample_002.mp4": {
+  "duration": 317.817,
+  "fps": 29.97,
+  "events": [
+   [
+    3.07,
+    6.073,
+    "jaywalking"
+   ],
+   [
+    7.074,
+    15.082,
+    "jaywalking"
+   ],
+   [
+    42.609,
+    45.612,
+    "jaywalking"
+   ],
+   [
+    78.345,
+    84.651,
+    "jaywalking"
+   ],
+   [
+    145.712,
+    148.715,
+    "jaywalking"
+   ],
+   [
+    295.362,
+    297.364,
+    "jaywalking"
+   ],
+   [
+    39.106,
+    65.632,
+    "stopped_vehicle"
+   ],
+   [
+    109.676,
+    117.684,
+    "stopped_vehicle"
+   ],
+   [
+    209.276,
+    259.326,
+    "stopped_vehicle"
+   ]
+  ],
+  "approximate": false,
+  "source": "tools/review.html: pipeline + seed candidates confirmed or corrected by a person, plus added misses"
+ },
+ "sample_003.mp4": {
+  "duration": 317.817,
+  "fps": 29.97,
+  "events": [
+   [
+    27.094,
+    30.597,
+    "jaywalking"
+   ],
+   [
+    87.087,
+    95.162,
+    "jaywalking"
+   ],
+   [
+    129.196,
+    142.209,
+    "jaywalking"
+   ],
+   [
+    154.221,
+    164.231,
+    "jaywalking"
+   ],
+   [
+    171.905,
+    174.841,
+    "jaywalking"
+   ],
+   [
+    177.744,
+    180.747,
+    "jaywalking"
+   ],
+   [
+    180.981,
+    185.752,
+    "jaywalking"
+   ],
+   [
+    259.126,
+    262.329,
+    "jaywalking"
+   ],
+   [
+    51.618,
+    76.143,
+    "stopped_vehicle"
+   ],
+   [
+    134.201,
+    148.715,
+    "stopped_vehicle"
+   ]
+  ],
+  "approximate": false,
+  "source": "tools/review.html: pipeline + seed candidates confirmed or corrected by a person, plus added misses"
+ },
+ "sample_004.mp4": {
+  "duration": 127.627,
+  "fps": 29.97,
+  "events": [
+   [
+    88.655,
+    104.171,
+    "congestion"
+   ],
+   [
+    13.58,
+    15.582,
+    "jaywalking"
+   ],
+   [
+    102.169,
+    103.67,
+    "jaywalking"
+   ],
+   [
+    106.673,
+    109.176,
+    "jaywalking"
+   ],
+   [
+    112.179,
+    114.181,
+    "jaywalking"
+   ],
+   [
+    74.641,
+    122.689,
+    "stopped_vehicle"
+   ]
+  ],
+  "approximate": false,
+  "source": "tools/review.html: pipeline + seed candidates confirmed or corrected by a person, plus added misses"
+ }
+}

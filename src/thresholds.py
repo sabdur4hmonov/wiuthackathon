@@ -50,9 +50,15 @@ class StoppedVehicleThresholds:
     # CALIBRATION: SPEC. The task defines stopped_vehicle as ">= 10 s".
     min_duration_sec: float = 10.0
 
-    # CALIBRATION: GUESS, biased quiet. Weak detections of a static object are
-    # where phantom "vehicles" come from.
-    min_confidence: float = 0.40
+    # CALIBRATION: LABELLED (labels/ground_truth.json, 2026-09-25), was 0.40.
+    # Weak detections of a static object are where phantom "vehicles" come
+    # from -- but at 0.40 (with min_box_frac 0.04) the rule found none of the 8
+    # labelled stops. 0.30 + 0.02 finds 2 (both sample_003) with 1 false
+    # positive (sample_004): stopped_vehicle F1 0 -> 0.30, Score A 0.18 -> 0.28
+    # on the dev clips. Weak evidence (2 hits, one clip), kept because the
+    # class occurs in all four labelled clips and a class never predicted
+    # scores 0 whatever else happens.
+    min_confidence: float = 0.30
 
     # CALIBRATION: GUESS. A loose PRE-FILTER only, on net movement over 2 s
     # (rules.util.sustained_speed). max_drift_L is the real decision.
@@ -107,7 +113,8 @@ class StoppedVehicleThresholds:
     # this point were distant cars 67-80 px tall (4K) at the far end of the
     # avenue, half behind a lamp post, one switching track id 7 times in 21 s:
     # their ground points are not reliable enough to accuse anyone.
-    min_box_frac: float = 0.04
+    # LABELLED 2026-09-25: 0.02 (see min_confidence above).
+    min_box_frac: float = 0.02
 
 
 @dataclass(frozen=True)
@@ -173,8 +180,14 @@ class JaywalkingThresholds:
     # still flagged. Whether a labeller calls that jaywalking is unknown.
     # MEASURED 2026-09-24 (sample_001+002): at 0.5 L, 14 % of the surviving
     # candidate rows were people at the bus-stop kerb and boarding buses.
-    kerb_margin_L: float = 1.0
-    crossing_margin_L: float = 0.5
+    # LABELLED (labels/ground_truth.json, 2026-09-25): 1.0 / 0.5 -> 0.75 / 0.25.
+    # Jaywalking F1 0.38 -> 0.55 on the four dev clips (TP 6 -> 14, FP 3 -> 9,
+    # FN 17 -> 9), more hits on EVERY clip. Caveat: the labels were made by
+    # reviewing our own candidates, including near misses found at 0.5 / 0.25,
+    # so the sweep flatters settings near those; only the two margins moved
+    # (confidence unchanged: lowering it added almost nothing).
+    kerb_margin_L: float = 0.75
+    crossing_margin_L: float = 0.25
 
     # CALIBRATION: GUESS. A "person" box with at least this share of its area
     # inside a vehicle box in the same frame is a rider or an occupant, not a
