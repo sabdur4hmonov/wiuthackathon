@@ -823,3 +823,48 @@ under the 2 s minimum; four keyframe samples count as 2.0 s.
 * **Part B stays the default RiskEstimator**: `step()` returns the cached 0.0
   on every frame and does no image work, so it adds nothing to the harness
   decode that is our bottleneck.
+
+### Acceptance: the budget, measured (2026-09-24)
+
+**The "8-core box" is a 4-core laptop** (i7-1065G7, 8 threads, 15 W, Balanced
+power plan). It throttles under sustained load: back-to-back 120-frame cv2
+reads of the same file swing 1.6x -> 2.9x realtime within a minute. Every
+decode figure below is one draw from that range.
+
+Part A, per clip (keyframes, downscale to 960, full clip, no inference):
+
+| clip | decode | tracker | alignment | probe |
+|---|---|---|---|---|
+| sample_001 | 0.118x | 0.009x | 1.5 s | ~7 s |
+| sample_002 | 0.123x | -- | 1.5 s | ~5 s |
+| sample_003 | 0.122x | 0.011x | 1.5 s | ~5 s |
+| sample_004 | 0.107x | -- | 1.5 s | ~5 s |
+
+(0.27x on a cold first read of a 6 GB file.) Detector inference is on top:
+measured on this CPU at 0.41-0.59 s per keyframe (4 threads, while another
+process ran), i.e. 0.8-1.2x realtime at 2 keyframes/s. On a T4 it is
+estimated at 20-30 ms per keyframe (YOLO11s, 960, fp16, with pre/post):
+0.04-0.06x -- not measured here.
+
+Part B, per clip, from a full `run_submission.py` pass (default RiskEstimator):
+
+| clip | Part B | probe (median of 3) |
+|---|---|---|
+| sample_001 | 1.24x | 0.94x |
+| sample_002 | 1.45x | 1.17x |
+| sample_003 | 2.98x throttled, 1.92x on a re-run | 3.03x / 0.92x |
+| sample_004 | 1.21x | 1.01x |
+
+Against the 3.0x budget, with Part A = 0.12 decode + 0.05 GPU inference +
+0.01 tracker + ~0.03 alignment/probe ~= 0.21x:
+
+| clip | total (GPU box) | margin | total (CPU-only, inference ~1.0x) | margin |
+|---|---|---|---|---|
+| sample_001 | 1.45x | 1.55x | 2.44x | 0.56x |
+| sample_002 | 1.66x | 1.34x | 2.65x | 0.35x |
+| sample_003 | 2.13x (3.19x throttled) | 0.87x (-0.19x) | 3.12x | over |
+| sample_004 | 1.42x | 1.58x | 2.41x | 0.59x |
+
+Part A is no longer what decides the outcome: when this laptop throttled,
+sample_003's Part B decode alone took 2.98x, and that run was wiped with a
+Part A of 8 s. Nothing in `solution.py` can shorten that pass.
