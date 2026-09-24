@@ -140,11 +140,27 @@ class BudgetConfig:
 class PerceptionConfig:
     """Anything here changes the tracks, so it is part of the cache key."""
 
-    weights: str = "yolo11s.pt"
-    imgsz: int = 960                 # CCTV objects are small; 640 loses them
+    # ======================================================================
+    # DETECTOR SPEED KNOBS -- the three values to edit if Stage 1 is over
+    # budget. Nothing else in the codebase hard-codes them; everything reads
+    # CFG.perception. Example fallback: imgsz=640, frame_stride=4.
+    #
+    # What changes when you flip them:
+    #   * The perception cache key changes, so every clip re-runs Stage 1.
+    #   * ByteTrack's track_buffer is 30 PROCESSED frames, so its real-time
+    #     length scales with frame_stride: 2.0 s at stride 2 on 29.97 fps,
+    #     4.0 s at stride 4. Rules are written in seconds and do not care.
+    #   * `weights` must name a file in weights/ that weights/download.sh
+    #     also fetches -- the run is offline, and only yolo11s.pt is listed
+    #     there today. tests/test_config.py fails if the two disagree.
+    # ======================================================================
+    weights: str = "yolo11s.pt"      # model variant (yolo11n / s / m ...)
+    imgsz: int = 960                 # detector input size; CCTV objects are small, 640 loses them
+    frame_stride: int = 2            # process every Nth decoded frame
+    # ======================================================================
+
     conf: float = 0.20               # low: ByteTrack's second stage uses the tail
     iou: float = 0.70                # NMS IoU
-    frame_stride: int = 2            # process every Nth frame
     max_det: int = 300
     half: bool = True                # fp16 on CUDA, ignored on CPU
     tracker: str = "bytetrack.yaml"
