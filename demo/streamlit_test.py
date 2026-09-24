@@ -59,7 +59,12 @@ def self_test() -> None:
                 out[p] = md.version(p)
             except md.PackageNotFoundError:
                 out[p] = "-"
-        return f"python {platform.python_version()}; {out}"
+        try:
+            osr = dict(l.split("=", 1) for l in Path("/etc/os-release").read_text().splitlines() if "=" in l)
+            os_name = osr.get("PRETTY_NAME", "?").strip('"')
+        except OSError:
+            os_name = platform.platform()
+        return f"{os_name}; python {platform.python_version()}; {out}"
 
     def cv2_check():
         import cv2
