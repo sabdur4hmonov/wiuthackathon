@@ -82,10 +82,13 @@ def test_no_density_without_a_real_part_b_measurement(clip, model):
     assert model.frames == N // GOP
 
 
-def test_density_when_the_measured_part_b_leaves_room(clip, model):
+def test_density_when_the_measured_part_b_leaves_room(clip, model, monkeypatch):
     b = _budget(clip)
     b.set_measured_part_b(0.0)                     # a light clip: Part B is cheap
     assert b.headroom_x() >= b.cfg.dense_min_headroom_x
+    # The choice is under test, not the drop-back (its own test below): on a
+    # slow first run this 4.8 s clip can project past its budget and drop back.
+    monkeypatch.setattr(b, "project_overrun", lambda *a, **k: False)
     t = perception.run_perception(clip, b, verbose=False)
     assert t.frame_stride == 3                     # I+P: one frame in three
     assert model.frames > 3 * (N // GOP)
