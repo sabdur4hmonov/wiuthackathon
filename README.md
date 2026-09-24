@@ -665,3 +665,26 @@ cause in the frames, and fixed at the cause:
   perception -- and alignment -- would barely start. The four
   `test_harness_contract` failures (tiny clips over their 5 s budget) are the
   same pre-existing gap from CP2: identical before and after CP3.
+
+## CP4: keyframe-only Part A (2026-09-24)
+
+The harness's own Part B pass decodes every frame of the original 4K file
+(~2.3-2.5x realtime on the 8-core box). Part A used `cv2.grab()` on every
+frame too, and `grab()` still runs the H.264 decoder: stride only saved the
+colour conversion and the detector. Two full decodes cannot fit in 3x. CP4
+makes Part A decode keyframes only.
+
+### The GOP (`tools/gop_probe.py`)
+
+| clip | frames | keyframes | GOP (frames) | GOP (s) | B-frames |
+|---|---|---|---|---|---|
+| sample_001 | 10200 | 680 | 15 fixed | 0.501 | yes |
+| sample_002 | 9525 | 635 | 15 fixed | 0.501 | yes |
+| sample_003 | 9525 | 635 | 15 fixed | 0.501 | yes |
+| sample_004 | 3825 | 255 | 15 fixed | 0.501 | yes |
+
+Every GOP is exactly 15 frames, with no variation, in display order
+`BBI BBP BBP BBP BBP`: one I, four P, ten B, and one third of packets reordered
+(pts != dts). A keyframe arrives every 0.5 s -- 2 samples per second -- well
+under the ~1 s where tracking would break, so keyframes-only (`NONKEY`) is
+the primary mode. `NONREF` would decode I+P, 10 samples per second.
