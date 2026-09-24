@@ -22,13 +22,19 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 RISK_DIR = ROOT / "src" / "risk"
 
-# Modules that have seen, or can reach, the whole video.
+# Modules that have seen, or can reach, the whole video -- or can open one
+# (PyAV and our keyframe reader).
 FORBIDDEN_MODULES = {
     "src.perception", "src.cache", "src.pipeline", "src.tracks",
-    "src.rules", "src.postprocess", "src.zones",
-    "perception", "cache", "pipeline", "tracks", "rules", "postprocess",
-    "cv2", "ultralytics",
+    "src.rules", "src.postprocess", "src.zones", "src.avdecode",
+    "perception", "cache", "pipeline", "tracks", "rules", "postprocess", "av",
 }
+# The estimator runs its OWN detector on the frames it is handed (causal), so
+# the source may import cv2 (resize) and ultralytics (YOLO) -- but only lazily:
+# importing src.risk must not load them, and it must still work (quietly)
+# when they cannot be imported at all. Opening a video is banned separately
+# (VideoCapture / imread, below).
+IMPORT_TIME_FORBIDDEN = FORBIDDEN_MODULES | {"cv2", "ultralytics"}
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +97,7 @@ def test_importing_risk_does_not_pull_in_the_pipeline():
         import sys, json
         sys.path.insert(0, {str(ROOT)!r})
         import src.risk                      # noqa: F401
-        banned = sorted(m for m in sys.modules if m in {sorted(FORBIDDEN_MODULES)!r})
+        banned = sorted(m for m in sys.modules if m in {sorted(IMPORT_TIME_FORBIDDEN)!r})
         print(json.dumps(banned))
     """)
     res = subprocess.run([sys.executable, "-c", code], capture_output=True,
@@ -112,7 +118,7 @@ def test_estimator_runs_without_the_pipeline_importable():
 
         # Make the batch modules un-importable, then use the estimator anyway.
         class Blocker:
-            BANNED = {sorted(FORBIDDEN_MODULES)!r}
+            BANNED = {sorted(IMPORT_TIME_FORBIDDEN)!r}
             def find_module(self, name, path=None):
                 return self if name in self.BANNED else None
             def find_spec(self, name, path=None, target=None):

@@ -269,9 +269,43 @@ class PerceptionConfig:
 class RiskConfig:
     """Part B. Must stay cheap: step() is called on EVERY frame."""
 
-    work_every_n_frames: int = 5     # do real work 1 frame in N, else cache
+    work_every_n_frames: int = 6     # real work 1 frame in N (5 Hz at 29.97 fps), else cache
     default_score: float = 0.0       # default-quiet: silence is free, alarms are not
     max_score: float = 1.0
+
+    # -- the detector-based signal (src/risk/estimator.py) -------------------
+    detect_imgsz: int = 640          # smaller than Part A's 960: near, large objects matter here
+    detect_conf: float = 0.30
+    # Motion over at least this long (s) before a velocity is trusted.
+    velocity_min_span_sec: float = 0.4
+    # A pair is on a collision course if, at closest approach, the centres are
+    # within this many (mean) box heights ...
+    collision_radius_L: float = 0.4
+    # ... and they close at least this fast (box heights per second).
+    min_closing_L_s: float = 3.0
+    # Score = 0.5 ** (ttc / ttc_half_sec): 0.5 at a 0.5 s time-to-collision,
+    # 0.25 at 1 s, ~0.001 at 5 s -- and it must hold for persist_samples
+    # consecutive samples (0.6 s at 5 Hz) before it counts.
+    # MEASURED, not guessed (no accident in the sample clips, so this sets only
+    # the false-alarm rate): straight-line extrapolation finds "collision
+    # courses" all over a busy intersection. The first setting (radius 0.6,
+    # closing 1.0, half-life 1.0 s, 2 samples) raised 54 alarms in 445 s of
+    # accident-free footage (sample_003 + sample_004, guard off) and was
+    # non-zero 88% of the time; this one raises 0 there (max score 0.37,
+    # non-zero 33%). The continuous score still ranks risky moments for AP.
+    ttc_half_sec: float = 0.5
+    persist_samples: int = 3
+
+    # -- self-timing guard: Part B's decode is the biggest cost we have -------
+    # Our own work in step() may use at most this fraction of the video's
+    # duration in total...
+    work_budget_frac: float = 0.12
+    # ...and stops as soon as Part B's projected wall time (harness decode +
+    # our work, extrapolated from progress so far) exceeds this multiple of
+    # the duration: 3.0x total minus Part A's share (~0.2-0.35x on a GPU box)
+    # and a margin. From then on step() returns the last score.
+    part_b_wall_limit_x: float = 2.3
+    guard_min_progress: float = 0.03   # do not extrapolate before this share of the video
 
 
 @dataclass(frozen=True)
