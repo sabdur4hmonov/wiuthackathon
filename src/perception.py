@@ -39,6 +39,7 @@ from pathlib import Path
 
 import numpy as np
 
+from . import align
 from .budget import Budget
 from .config import CFG, WEIGHTS_DIR, PerceptionConfig, enforce_offline, seed_everything
 from .ffdecode import FFmpegFrameReader, FFmpegUnavailable, scaled_size
@@ -255,6 +256,28 @@ def run_perception(video_path: str | Path,
     # amortised across the first handful of frames.
     loop_t0 = t_start
     expected = max(1, budget.n_frames // stride)
+    # Camera-pose alignment (src/align.py) from frames this decode already
+    # has, matched as they arrive. Matching inside the loop -- not after it --
+    # is what charges its cost to the per-frame projection, so perception can
+    # never use up the budget that alignment then needs: an early version that
+    # matched at the end found no headroom left on every real clip.
+    align_at = align.sample_times(budget.duration)
+    align_matches: list = []
+    align_state = {"skipped": 0, "sec": 0.0}
+
+    def _keep_for_alignment(frame, t_sec):
+        if align_at and t_sec >= align_at[0]:
+            while align_at and t_sec >= align_at[0]:
+                align_at.pop(0)
+            if budget.remaining_to_hard() < align.CFG_ALIGN.min_headroom_sec:
+                align_state["skipped"] += 1
+                return
+            t_al = time.perf_counter()
+            try:
+                align_matches.append(align.match_frame(align.prepare(frame)))
+            except Exception:  # noqa: BLE001 - a bad frame costs alignment, never tracks
+                pass
+            align_state["sec"] += time.perf_counter() - t_al
 
     def _should_stop_after(processed_count):
         """Shared budget check, invoked identically from either decode path."""
@@ -279,6 +302,7 @@ def run_perception(video_path: str | Path,
             for idx, frame in ff_reader.frames():
                 if idx % stride == 0:
                     t_sec = idx / budget.fps if budget.fps else 0.0
+                    _keep_for_alignment(frame, t_sec)
                     res = model.track(frame, **track_kwargs)
                     rows.extend(_rows_from_result(res, idx, t_sec))
                     last_t = t_sec
@@ -297,6 +321,7 @@ def run_perception(video_path: str | Path,
                     if not ok:
                         break
                     t_sec = idx / budget.fps if budget.fps else 0.0
+                    _keep_for_alignment(frame, t_sec)
                     res = model.track(frame, **track_kwargs)
                     rows.extend(_rows_from_result(res, idx, t_sec))
                     last_t = t_sec
@@ -313,6 +338,7 @@ def run_perception(video_path: str | Path,
     data = (np.vstack(rows).astype(np.float32) if rows
             else np.zeros((0, len(COLUMNS)), dtype=np.float32))
     data = compute_kinematics(data, cfg.velocity_window)
+    pose = _combine_pose(align_matches, align_state, budget, verbose)
 
     table = TrackTable(
         data=data, fps=budget.fps, duration=budget.duration,
@@ -320,6 +346,7 @@ def run_perception(video_path: str | Path,
         frame_stride=stride,
         complete=budget.stop_reason is None,
         processed_until_sec=last_t,
+        pose=pose.to_dict(),
     )
     elapsed = time.perf_counter() - t_start
     budget.note("perception", elapsed,
@@ -331,6 +358,27 @@ def run_perception(video_path: str | Path,
         print(f"[perception] {table.summary()} in {elapsed:.1f}s on {device} "
               f"(decoder={decoder_used})", file=sys.stderr)
     return table
+
+
+def _combine_pose(matches: list, state: dict, budget: Budget,
+                  verbose: bool) -> "align.Pose":
+    """One pose from the per-frame matches made during the loop; IDENTITY when
+    none could be afforded or trusted. Combining is cheap: the matching already
+    happened, and was charged, inside the loop."""
+    from dataclasses import replace
+
+    if not matches:
+        reason = ("skipped: no budget headroom" if state["skipped"] else "no frames")
+        pose = replace(align.IDENTITY, reason=reason)
+    else:
+        try:
+            pose = align.estimate([], matches=matches)
+        except Exception as e:  # noqa: BLE001 - alignment must never cost the video
+            pose = replace(align.IDENTITY, reason=f"failed: {e!r}")
+    budget.note("align", state["sec"], f"{len(matches)} frames matched in-loop; {pose.reason}")
+    if verbose:
+        align.log(pose)
+    return pose
 
 
 def _rows_from_result(res, frame_idx: int, t_sec: float) -> list[np.ndarray]:

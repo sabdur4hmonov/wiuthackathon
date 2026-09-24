@@ -112,6 +112,7 @@ def load(vhash: str, chash: str) -> TrackTable | None:
             frame_stride=int(meta["frame_stride"]),
             complete=bool(meta.get("complete", True)),
             processed_until_sec=float(meta.get("processed_until_sec", 0.0)),
+            pose=meta.get("pose"),
         )
     except Exception:
         return None
@@ -137,6 +138,7 @@ def store(vhash: str, chash: str, table: TrackTable) -> bool:
             "height": table.height, "frame_stride": table.frame_stride,
             "complete": table.complete,
             "processed_until_sec": table.processed_until_sec,
+            "pose": table.pose,
         }
         # Write through a handle: np.savez_compressed appends ".npz" to a PATH
         # whose name does not already end in it, which would leave the temp file

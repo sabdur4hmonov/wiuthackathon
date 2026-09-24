@@ -46,7 +46,8 @@ def _pts(raw) -> np.ndarray | None:
         return None
 
 
-def render(image: Path, zones_path: Path, out: Path, strict: bool) -> None:
+def render(image: Path, zones_path: Path, out: Path, strict: bool,
+           pose=None) -> None:
     img = cv2.imread(str(image))
     if img is None:
         raise SystemExit(f"cannot read image {image}")
@@ -69,8 +70,15 @@ def render(image: Path, zones_path: Path, out: Path, strict: bool) -> None:
     overlay = img.copy()
     drawn = 0
 
+    # Camera-pose alignment (src/align.py): after the resolution rescale, the
+    # similarity carries the authored pose onto this video's framing.
+    m = pose.matrix(w) if pose is not None and not pose.is_identity else None
+
     def scale(p: np.ndarray) -> np.ndarray:
-        return (p * np.array([sx, sy], dtype=np.float32)).astype(np.int32)
+        q = p * np.array([sx, sy], dtype=np.float32)
+        if m is not None:
+            q = q @ m[:, :2].T + m[:, 2]
+        return q.astype(np.int32)
 
     def label_at(pt, text, colour):
         x, y = int(pt[0]), int(pt[1])
@@ -151,8 +159,8 @@ def render(image: Path, zones_path: Path, out: Path, strict: bool) -> None:
         if not roi:
             continue
         x1, y1, x2, y2 = (float(v) for v in roi)
-        p1 = (int(x1 * sx), int(y1 * sy))
-        p2 = (int(x2 * sx), int(y2 * sy))
+        q = scale(np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]], dtype=np.float32))
+        p1, p2 = tuple(int(v) for v in q.min(axis=0)), tuple(int(v) for v in q.max(axis=0))
         c = COLOURS["traffic_lights"]
         cv2.rectangle(img, p1, p2, c, 2)
         label_at(p1, str(item.get("id", "signal")), c)
@@ -161,6 +169,10 @@ def render(image: Path, zones_path: Path, out: Path, strict: bool) -> None:
     # -- banner ------------------------------------------------------------
     msg = (f"{drawn} shapes" if not errors
            else f"{drawn} shapes — {len(errors)} UNAUTHORED FIELD(S)")
+    if pose is not None:
+        msg += (f" | aligned ({pose.reason}): scale {pose.scale:.4f}, "
+                f"rot {pose.angle_deg:+.2f} deg, shift x{w / 960:.0f} "
+                f"({pose.tx * w / 960:+.0f}, {pose.ty * w / 960:+.0f}) px")
     colour = (142, 207, 62) if not errors else (72, 182, 255)
     cv2.rectangle(img, (0, 0), (w, 28), (0, 0, 0), -1)
     cv2.putText(img, f"{zones_path.name}: {msg}", (8, 19),
@@ -196,8 +208,18 @@ def main() -> int:
     ap.add_argument("--out", default=Path("check.png"), type=Path)
     ap.add_argument("--strict", action="store_true",
                     help="refuse to render a file that still has TODOs")
+    ap.add_argument("--pose-from", type=Path, default=None,
+                    help="align the zones to this video's camera pose first "
+                         "(src/align.py), as the pipeline does")
     args = ap.parse_args()
-    render(args.image, args.zones, args.out, args.strict)
+    pose = None
+    if args.pose_from:
+        from src.align import estimate_from_video, log
+        from src.budget import probe_duration
+
+        pose = estimate_from_video(str(args.pose_from), probe_duration(args.pose_from)[0])
+        log(pose)
+    render(args.image, args.zones, args.out, args.strict, pose)
     return 0
 
 

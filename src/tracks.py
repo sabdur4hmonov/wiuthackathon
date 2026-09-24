@@ -59,6 +59,9 @@ class TrackTable:
     frame_stride: int
     complete: bool = True            # False when perception stopped on budget
     processed_until_sec: float = 0.0  # last timestamp actually looked at
+    # Camera pose vs the zones reference (src.align.Pose.to_dict()), estimated
+    # from frames Stage 1 decoded anyway. None for tables cached before it existed.
+    pose: dict | None = None
     # Per-instance scratch for derived views (class filters, zone membership).
     # NOT part of the on-disk schema and never serialised: Stage 2 runs several
     # rules over the same table and recomputing these per rule costs more than

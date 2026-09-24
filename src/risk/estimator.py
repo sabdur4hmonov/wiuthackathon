@@ -34,7 +34,13 @@ from ..config import CFG, RiskConfig
 
 
 class RiskEstimator:
-    """P(an accident starts within the next 5 s), from past frames only."""
+    """P(an accident starts within the next 5 s), from past frames only.
+
+    Uses no zones today. If it ever does, the zones must be aligned to the
+    camera causally -- from frames step() has already seen (src.align.match_frame
+    on the latest good frame) -- never with Part A's whole-clip median pose,
+    which is computed from frames in the future.
+    """
 
     def __init__(self, cfg: RiskConfig | None = None) -> None:
         self.cfg = cfg or CFG.risk

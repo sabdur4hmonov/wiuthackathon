@@ -39,6 +39,7 @@ def detect_events(video_path: str, verbose: bool = True,
     try:
         tracks = _get_tracks(video_path, budget, use_cache=use_cache, verbose=verbose)
         zones = _get_zones(tracks, verbose=verbose)
+        zones = _align_zones(video_path, tracks, zones, budget, verbose=verbose)
 
         with budget.stage("rules"):
             raw = run_rules(tracks, zones)
@@ -138,6 +139,41 @@ def _get_tracks(video_path: str, budget: Budget, use_cache: bool,
         except Exception:
             pass
     return tracks
+
+
+def _align_zones(video_path: str, tracks: TrackTable, zones: Zones | None,
+                 budget: Budget, verbose: bool) -> Zones | None:
+    """Warp zones.json onto this video's camera framing (see src/align.py).
+
+    The pose normally rides on the tracks, estimated from frames Stage 1
+    decoded anyway. Tracks from a cache entry written before alignment existed
+    carry none, and Stage 1 may have had no room for it; only then are a few
+    frames decoded here, and the cost is charged to the budget. Any failure
+    leaves the zones unwarped.
+    """
+    from dataclasses import replace
+
+    from . import align
+
+    if zones is None:
+        return None
+    try:
+        pose = align.Pose.from_dict(tracks.pose)
+        # No pose stored, or Stage 1 could not afford one: estimate it here if
+        # there is room now.
+        if pose is None or (pose.is_identity and pose.reason.startswith("skipped")):
+            if budget.remaining_to_hard() < align.CFG_ALIGN.min_headroom_sec:
+                pose = replace(align.IDENTITY, reason="skipped: no budget headroom")
+            else:
+                with budget.stage("align"):
+                    pose = align.estimate_from_video(video_path, budget.duration)
+        if verbose:
+            align.log(pose)
+        return align.warp_zones(zones, pose, tracks.width or zones.image_width)
+    except Exception as e:  # noqa: BLE001 - a failed alignment must not cost the video
+        if verbose:
+            print(f"[align] failed, zones left unwarped: {e!r}", file=sys.stderr)
+        return zones
 
 
 def _get_zones(tracks: TrackTable, verbose: bool) -> Zones | None:
