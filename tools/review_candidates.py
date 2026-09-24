@@ -19,6 +19,10 @@ For each candidate a ~H.264 clip (960 wide, every 2nd frame, the window
 the 10-bit 4:2:2 source -- with the source timestamp burned in, the crossing
 polygons drawn, and the candidate's tracked boxes outlined.
 
+--scan also adds the windows tools/scan_windows.py flags for classes with no
+automated candidates (stopped_vehicle, wrong_way, congestion): places a person
+should LOOK, not events. Windows longer than MAX_CLIP_SEC are rendered sped up.
+
 --proxies also writes a full-length 960-wide H.264 proxy of each clip, so
 missed events elsewhere can be found with tools/label.html (it decodes the
 whole 4K file: ~1-3x realtime per clip).
@@ -52,6 +56,7 @@ from src.tracks import COL  # noqa: E402
 PAD_SEC = 2.0
 OUT_WIDTH = 960
 PROBES_PER_CLIP = 8
+MAX_CLIP_SEC = 20.0      # longer windows play sped up (2x, 4x, ...)
 
 # Recall probes: the shipped rules with every gate loosened toward firing.
 RELAXED = {
@@ -77,7 +82,8 @@ def _overlap(a, b) -> float:
     return max(0.0, min(a[1], b[1]) - max(a[0], b[0]))
 
 
-def candidates_for(video: Path, seed: dict) -> tuple[list[dict], object, object]:
+def candidates_for(video: Path, seed: dict, with_scan: bool = False
+                   ) -> tuple[list[dict], object, object]:
     tracks, zones = _tracks_and_zones(video)
     fps, step = tracks.fps, tracks.frame_stride
     raw = run_rules(tracks, zones)
@@ -88,15 +94,16 @@ def candidates_for(video: Path, seed: dict) -> tuple[list[dict], object, object]
 
     found: list[dict] = []
 
-    def add(start, end, label, source, ids=()):
+    def add(start, end, label, source, ids=(), reason=""):
         for c in found:
             if c["label"] == label and _overlap((c["start"], c["end"]), (start, end)) > 0:
                 c["start"], c["end"] = min(c["start"], start), max(c["end"], end)
                 c["sources"] = sorted(set(c["sources"]) | {source})
                 c["track_ids"] = sorted(set(c["track_ids"]) | set(ids))
+                c["reason"] = "; ".join(x for x in (c["reason"], reason) if x)
                 return
         found.append({"start": start, "end": end, "label": label, "sources": [source],
-                      "track_ids": sorted(set(ids))})
+                      "track_ids": sorted(set(ids)), "reason": reason})
 
     for s, e, lab in shipped:
         ids = [i for rs, re, ii in ids_by_event.get(lab, []) if _overlap((rs, re), (s, e)) > 0
@@ -111,6 +118,10 @@ def candidates_for(video: Path, seed: dict) -> tuple[list[dict], object, object]
         segs.sort(key=lambda sg: sg.end - sg.start, reverse=True)
         for sg in segs[:PROBES_PER_CLIP]:
             add(sg.start, sg.end, lab, "recall probe", sg.track_ids)
+    if with_scan:
+        import scan_windows
+        for w in scan_windows.scan(tracks, zones):
+            add(w.start, w.end, w.label, f"scan: {w.kind}", w.track_ids, w.reason)
     found.sort(key=lambda c: c["start"])
     return found, tracks, zones
 
@@ -132,12 +143,13 @@ def _draw(img, t_abs, tracks, zones, ids, scale):
 
 
 def render_clip(video: Path, start: float, end: float, out_mp4: Path, out_jpg: Path,
-                tracks, zones, ids) -> float:
+                tracks, zones, ids, keep_every: int = 2) -> float:
     """Cut [start, end] from the original file to a browser-playable H.264 clip.
 
-    Every 2nd source frame, at exactly half the source rate, so playback time
-    t in the clip is source time t0 + t. Returns t0, the source time of the
-    first frame written (the review page adds it to the video's currentTime).
+    Every `keep_every`-th source frame, at exactly half the source rate, so
+    playback time t in the clip is source time t0 + t * keep_every / 2 (real
+    time at the default 2). Returns t0, the source time of the first frame
+    written (the review page adds it to the video's currentTime x speed).
     """
     import av
     import cv2
@@ -162,7 +174,7 @@ def render_clip(video: Path, start: float, end: float, out_mp4: Path, out_jpg: P
             if t > end:
                 break
             k += 1
-            if not k % 2:
+            if (k - 1) % keep_every:
                 continue
             if t0 is None:
                 t0 = t
@@ -209,6 +221,8 @@ def main() -> int:
     ap.add_argument("--seed", type=Path, help="ground_truth.json-shaped events to review as well")
     ap.add_argument("--out", type=Path, default=ROOT / "labels" / "review")
     ap.add_argument("--proxies", action="store_true", help="also write full-length H.264 proxies")
+    ap.add_argument("--scan", action="store_true",
+                    help="also add tools/scan_windows.py windows (places to look, not events)")
     args = ap.parse_args()
 
     seed = json.loads(args.seed.read_text()) if args.seed else {}
@@ -218,19 +232,21 @@ def main() -> int:
     for video in args.videos:
         dur, fps, _n = probe_duration(video)
         clips[video.name] = {"duration": round(dur, 3), "fps": round(fps, 3), "proxy": None}
-        found, tracks, zones = candidates_for(video, seed)
+        found, tracks, zones = candidates_for(video, seed, with_scan=args.scan)
         print(f"{video.name}: {len(found)} candidates", flush=True)
         for c in found:
             cid = f"{video.stem}_{c['label']}_{c['start']:07.1f}".replace(".", "_")
             ws, we = max(0.0, c["start"] - PAD_SEC), min(dur, c["end"] + PAD_SEC)
             mp4, jpg = media / f"{cid}.mp4", media / f"{cid}.jpg"
-            t0 = render_clip(video, ws, we, mp4, jpg, tracks, zones, c["track_ids"])
+            keep = 2 * max(1, int(np.ceil((we - ws) / MAX_CLIP_SEC)))
+            t0 = render_clip(video, ws, we, mp4, jpg, tracks, zones, c["track_ids"], keep)
             cands.append({"id": cid, "clip": video.name, "start": round(c["start"], 3),
                           "end": round(c["end"], 3), "label": c["label"], "sources": c["sources"],
+                          "reason": c["reason"], "speed": keep // 2,
                           "window_start": round(t0, 4), "video": f"media/{mp4.name}",
                           "thumb": f"media/{jpg.name}"})
-            print(f"   {c['label']:<16} {c['start']:7.1f}-{c['end']:7.1f}  {', '.join(c['sources'])}",
-                  flush=True)
+            print(f"   {c['label']:<16} {c['start']:7.1f}-{c['end']:7.1f}  {', '.join(c['sources'])}"
+                  + (f"  [{keep // 2}x]" if keep > 2 else ""), flush=True)
         if args.proxies:
             px = media / f"{video.stem}_proxy.mp4"
             if not px.exists():

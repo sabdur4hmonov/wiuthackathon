@@ -29,11 +29,11 @@ sample_002 02:21 (bounds 1.5 s off CP3's: tIoU 0.43). The 2 FN: that same
 ## Getting a real ground truth (~30-40 min for all four clips)
 
 ```bash
-python tools/review_candidates.py samples/sample_00*.mp4 --seed labels/gt_approx_cp3.json --out labels/review
+python tools/review_candidates.py samples/sample_00*.mp4 --seed labels/gt_approx_cp3.json --out labels/review --scan --proxies
 ```
 
 then open `labels/review/index.html` in a browser (straight from disk).
-32 candidates, each a 5-10 s clip with the source time burned in:
+Each candidate is a short clip with the source time burned in:
 
 * **predicted / seed**: what the pipeline or CP3 reported.
 * **recall probe**: near misses the pipeline did NOT report (the same rules
@@ -48,6 +48,40 @@ re-imported. Then:
 ```bash
 python evaluate.py --pred predictions_samples.json --gt ground_truth.json --per-video
 ```
+
+### Scan windows: stopped_vehicle, wrong_way, congestion (`--scan`)
+
+Those three classes fire nothing on the sample clips, so they have no
+candidates -- a miss there is invisible. `--scan` adds windows flagged by
+`tools/scan_windows.py`: places a person should LOOK, deliberately far looser
+than the rules (it is a search aid, not a detector: nothing in src/ imports
+it, it registers no rule, and tests/test_scan_windows.py pins that).
+
+* **stationary**: a vehicle near-stationary >= 5 s anywhere on the road (the
+  rule wants 10 s, outside queue zones, off the kerb); outside-queue stops
+  rank first. Mostly parked, kerb or bus-stop stops -- deciding which, if
+  any, is a `stopped_vehicle` is the human's call.
+* **direction**: the wrong_way rule, loosened and with its keyframe-rate gate
+  lifted. Most will be platoon ALIASING (the card says so): check the traffic.
+* **slow traffic**: the congestion rule, loosened the same way.
+
+Capped at 6 / 4 / 3 per clip; overlapping windows merge; windows over 20 s
+play sped up (2-4x, shown on the card; start/end still convert exactly).
+
+### How long a full pass takes
+
+`--scan` gives 61 cards over the four clips: 10 reported events, 22 recall
+probes (jaywalking), 29 scan windows (10-11 per clip before merging). Their
+clips total 10.4 minutes of playback. At ~30 s per card to watch and decide,
+plus ~1 min each to set tight bounds on the ~10-15 that turn out real:
+**about 40-45 minutes** for all four clips.
+
+That covers what the tools can point at. Classes nothing flags (red_light,
+near_miss, accident, illegal turns ...) need the full-length proxies: 18.8
+minutes of footage, ~10 minutes at 2x plus pauses, **another 20-25 minutes**.
+Watching all four clips raw instead, for all three classes at once across a
+wide 4K scene, realistically takes 3-4x the footage length (60-80 minutes)
+with more misses.
 
 Candidates only cover what the rules can see. For classes no rule looks at,
 watch the full-length proxies (`labels/review/media/*_proxy.mp4`, written by

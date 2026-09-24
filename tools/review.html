@@ -70,7 +70,8 @@
   <b>Y</b> if it is a real event with roughly right bounds, <b>N</b> if it is not, or edit start / end /
   class and press <b>F</b>. tIoU 0.7 is strict: set bounds to where the behaviour starts and stops.
   <b>[</b> / <b>]</b> copy the playing video's time into start / end. "recall probe" candidates are
-  near misses the pipeline did NOT report; confirming one marks a miss. Add anything else you
+  near misses the pipeline did NOT report; confirming one marks a miss. "scan" cards are only
+  places to look for stopped vehicles, wrong-way driving and congestion: most will be N. Add anything else you
   saw with "Add a missed event". Unreviewed candidates are left out of the export.</p>
   <div id="list"></div>
 </main>
@@ -132,15 +133,23 @@ function card(c, idx) {
   const decide = v => { state.decisions[c.id] = {verdict:v, start:+s.value, end:+e.value,
                           label:lab.value, note:note.value}; save(); render(); };
   box._decide = decide;
-  box._setStart = () => { s.value = (c.window_start + vid.currentTime).toFixed(2); };
-  box._setEnd = () => { e.value = (c.window_start + vid.currentTime).toFixed(2); };
+  // Long windows play sped up: source time = clip start + video time x speed.
+  const speed = c.speed || 1;
+  box._setStart = () => { s.value = (c.window_start + vid.currentTime * speed).toFixed(2); };
+  box._setEnd = () => { e.value = (c.window_start + vid.currentTime * speed).toFixed(2); };
   box._video = vid;
   const tags = el("div", {class:"row"});
-  for (const src of c.sources) tags.append(el("span", {class:"tag" + (src === "recall probe" ? " probe" : "")}, src));
+  for (const src of c.sources)
+    tags.append(el("span", {class:"tag" + (src === "recall probe" || src.startsWith("scan") ? " probe" : "")}, src));
+  if (speed > 1) tags.append(el("span", {class:"tag probe"}, `plays ${speed}x`));
+  const isScan = c.sources.every(x => x.startsWith("scan"));
   box.append(vid, el("div", {},
     el("div", {}, el("b", {}, c.label), ` ${mmss(c.start)} – ${mmss(c.end)}`,
        el("span", {class:"meta"}, `  (${(c.end - c.start).toFixed(1)} s)`)),
     tags,
+    c.reason ? el("div", {class:"meta"}, c.reason) : "",
+    isScan ? el("div", {class:"meta"}, el("b", {}, "Look, don't assume: "),
+      "Y only if you see the event (fix its bounds first); N if there is nothing here.") : "",
     el("div", {class:"row"}, "start", s, el("button", {onclick:box._setStart, title:"["}, "← now")),
     el("div", {class:"row"}, "end", e, el("button", {onclick:box._setEnd, title:"]"}, "← now")),
     el("div", {class:"row"}, "class", lab),
