@@ -110,8 +110,13 @@ class BudgetConfig:
     # else, extrapolates to the full frame count, and Budget.part_b_reserve
     # uses that measurement instead of the fixed multiplier whenever one is
     # available (Budget.set_measured_part_b). See src/budget.measure_part_b_floor.
-    part_b_probe_frames: int = 40    # frames to sample for the estimate
-    part_b_probe_max_sec: float = 3.0  # hard cap on the probe's own wall time
+    part_b_probe_frames: int = 30    # frames to sample, split over 3 positions
+    # Hard cap on the probe's own wall time. 3 s was too tight for three
+    # positions on the 4K clips: each seek warms up by decoding from the
+    # previous keyframe (up to ~1 s), and the probe stopped after one or two
+    # positions. 8 s is 0.8% of a 5-minute clip's budget; short clips are
+    # held to part_b_probe_max_frac below.
+    part_b_probe_max_sec: float = 8.0
     # ...but never more than this FRACTION of the video's own total budget --
     # same reasoning as safety_margin_frac: a flat 3.0s cap is fine for the
     # multi-minute real test clips, but on a very short clip (harness contract
@@ -142,7 +147,15 @@ class BudgetConfig:
     # there. MEASURED dense cost on the 4K clips, 8-core box: decode 0.53x
     # realtime (NONREF + downscale), plus five times the keyframe inference.
     dense_skip_frame: str = "NONREF"
-    dense_min_headroom_x: float = 1.0
+    # MEASURED, 2026-09-24, full harness runs on the 4K clips (4-core laptop
+    # i7-1065G7, which throttles under sustained load): the short probe
+    # UNDER-reads the sustained Part B decode by 1.2-2.1x (probe 0.92x vs
+    # actual 1.92x on one sample_003 run; 1.2-1.3x on the others) -- the probe
+    # runs while the CPU is still boosting. With the 1.3 safety factor, a
+    # headroom bar of 1.8x allows density only when the probe reads under
+    # ~0.9x, i.e. an actual Part B up to ~1.9x plus a ~0.8x dense Part A.
+    # Density is optional; the bar is biased toward not buying it.
+    dense_min_headroom_x: float = 1.8
 
 
 # --------------------------------------------------------------------------
