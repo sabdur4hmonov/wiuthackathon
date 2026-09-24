@@ -4,6 +4,8 @@ emoji: 🚦
 colorFrom: gray
 colorTo: blue
 sdk: gradio
+sdk_version: 6.28.0
+python_version: "3.12"
 app_file: app.py
 pinned: false
 license: agpl-3.0
@@ -17,4 +19,4 @@ and the prediction in the harness's JSON format.
 
 The event rules are drawn for one intersection (the competition's camera);
 on other scenes the app says so and shows detections and the risk curve only.
-Code: <REPO_URL>. Licence: AGPL-3.0 (Ultralytics YOLO11 is AGPL-3.0).
+Code: https://github.com/sabdur4hmonov/wiuthackathon. Licence: AGPL-3.0 (Ultralytics YOLO11 is AGPL-3.0).
