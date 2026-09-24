@@ -15,22 +15,31 @@ set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# name  sha256  url
+# name|sha256|url -- the sha256 is the file every Stage 1 run was measured with.
 MODELS=(
-  "yolo11s.pt|https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11s.pt"
+  "yolo11s.pt|85a76fe86dd8afe384648546b56a7a78580c7cb7b404fc595f97969322d502d5|https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11s.pt"
 )
+
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
+  else shasum -a 256 "$1" | cut -d' ' -f1; fi
+}
 
 echo "weights dir: $DIR"
 
 for entry in "${MODELS[@]}"; do
   name="${entry%%|*}"
-  url="${entry##*|}"
+  rest="${entry#*|}"
+  sha="${rest%%|*}"
+  url="${rest#*|}"
   dest="$DIR/$name"
 
   if [ -f "$dest" ]; then
-    size=$(wc -c < "$dest" | tr -d ' ')
-    echo "  $name already present (${size} bytes) — skipping"
-    continue
+    if [ "$(sha256_of "$dest")" = "$sha" ]; then
+      echo "  $name already present, sha256 ok — skipping"
+      continue
+    fi
+    echo "  $name present but its sha256 does not match (truncated or a different file) — re-fetching"
   fi
 
   echo "  fetching $name ..."
@@ -42,8 +51,14 @@ for entry in "${MODELS[@]}"; do
     echo "ERROR: neither curl nor wget is available" >&2
     exit 1
   fi
+  got="$(sha256_of "$dest.part")"
+  if [ "$got" != "$sha" ]; then
+    echo "ERROR: $name sha256 $got, expected $sha" >&2
+    rm -f "$dest.part"
+    exit 1
+  fi
   mv "$dest.part" "$dest"
-  echo "  wrote $dest ($(wc -c < "$dest" | tr -d ' ') bytes)"
+  echo "  wrote $dest ($(wc -c < "$dest" | tr -d ' ') bytes, sha256 ok)"
 done
 
 echo
