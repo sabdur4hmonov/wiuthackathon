@@ -33,3 +33,6 @@ check*.png
 
 # Generated review clips/proxies (tools/review_candidates.py)
 /labels/review/
+
+# Hugging Face Space staging (demo/deploy.py)
+/demo/_space_build/
