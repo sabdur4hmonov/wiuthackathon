@@ -98,7 +98,7 @@
   },
   {
    "finding": "At 2 samples/s platoons of cars alias: tracks drift backwards",
-   "decision": "wrong_way and congestion only run with samples <= 0.2 s apart (optional dense mode)."
+   "decision": "wrong_way stays gated off at keyframe rate. Congestion runs at 0.5 s sampling with a 1.5 s slow-persistence guard and at least four distinct crawling vehicles."
   },
   {
    "finding": "A starved Part A scores the same as a wiped video",

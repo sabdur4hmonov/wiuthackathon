@@ -31,6 +31,9 @@ annotated clip.
 * `platoon_aliasing` -- at 2 samples/s a platoon of cars makes the tracker drift
   backwards; why wrong_way is off at keyframe rate (congestion runs there, with
   two guards measured against a 0.1 s run -- see the main README).
+* `truck_queue` -- sample_004's ambiguous 88.7-104.2 s northbound standstill:
+  a turning articulated truck blocks traffic, but the shipped congestion rule
+  treats signal queues conservatively and misses this team's label.
 
 ## EDA (`eda/`)
 

@@ -25,5 +25,14 @@
   "title": "Why wrong-way detection is off at keyframe rate",
   "what": "Stage 1 samples one frame every 0.5 s. A platoon of cars moving about one car-gap per sample aliases: the tracker hops back to the car behind each sample, and the track drifts BACKWARDS (150-200 px/s the wrong way, while the real cars move at 550-680 px/s). That produced 11-13 false wrong-way events over the four clips.",
   "status": "wrong_way only runs when samples are <= 0.2 s apart (the optional dense mode); at keyframe rate it stays silent. congestion reads speed magnitude, which aliasing rarely zeroes (8 % of slow readings on sample_004, measured against a 0.1 s run); it runs at keyframe rate with a 1.5 s slow-persistence guard that removes 85 % of those."
+ },
+ {
+  "id": "truck_queue",
+  "clip": "sample_004",
+  "start": 88.7,
+  "end": 104.2,
+  "title": "An articulated truck blocks a queue",
+  "what": "The team's labels mark this 15 s northbound standstill as congestion while an articulated truck turns across the junction. From this camera it also resembles a signal queue, so the label is ambiguous.",
+  "status": "The shipped congestion rule excludes signal queue zones and misses this interval (one false negative). Signal-phase evidence is needed before widening the rule."
  }
 ]

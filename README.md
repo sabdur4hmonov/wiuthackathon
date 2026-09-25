@@ -32,7 +32,7 @@ python -m venv .venv && .venv/Scripts/activate   # Linux/macOS: source .venv/bin
 pip install -r requirements.txt
 bash weights/download.sh     # verifies the committed weights/yolo11s.pt (sha256); fetches it only if missing/corrupt
 python scripts/offline_check.py                   # proves the pipeline runs with every outbound socket blocked
-python run_submission.py --videos samples --out predictions.json --team <team>
+python run_submission.py --videos samples --out predictions.json --team Armagedon
 python evaluate.py --pred predictions.json --validate-only
 python evaluate.py --pred predictions.json --gt labels/ground_truth.json --per-video   # with labels
 ```
@@ -58,7 +58,7 @@ video ─┬─ Part B probe: time 3 short cv2 reads -> how much of the 3x budge
 
 harness frames ── Part B  src/risk/estimator.py  (causal: only frames step() has seen)
        own YOLO11s @640 at 5 Hz -> own tracker -> time-to-collision between road users
-       -> risk = 0.5 ** (TTC / 1 s); a self-timing guard stops the work before it can
+       -> risk = 0.5 ** (TTC / 0.5 s); a self-timing guard stops the work before it can
           threaten the budget
 ```
 
@@ -110,16 +110,16 @@ macro F1 a wrong class costs as much as a missed one.
 | what | licence |
 |---|---|
 | Ultralytics YOLO11s weights (`yolo11s.pt`, v8.3.0 assets release), COCO-pretrained | AGPL-3.0 |
-| COCO (the weights' pretraining data; we use no training data ourselves) | CC BY 4.0 |
+| COCO annotations (the weights' pretraining data; we use no training data ourselves) | CC BY 4.0; source-image licences vary |
 | ByteTrack (Ultralytics implementation, subclassed) | AGPL-3.0 (Ultralytics); original ByteTrack MIT |
 | PyAV (bundles FFmpeg) | BSD-3-Clause (FFmpeg: LGPL-2.1+) |
 | OpenCV | Apache-2.0 |
 | imageio-ffmpeg (bundled ffmpeg binary) | BSD-2-Clause (binary: LGPL/GPL build) |
 | lap, scipy, numpy | BSD |
-| Gradio (demo only) | Apache-2.0 |
+| Streamlit (demo only) | Apache-2.0 |
 | Sample clips | the organizers'; not redistributed (`samples/*.mp4` is git-ignored) |
 
-Because YOLO11 is AGPL-3.0, the demo Space is published under AGPL-3.0.
+Because YOLO11 is AGPL-3.0, the repository and live demo are published under AGPL-3.0.
 
 ## Determinism
 
@@ -148,14 +148,17 @@ see "congestion at keyframe rate" below). Per-event misses and false positives:
 `site_assets/eda/dev_error_analysis.json`. No accidents in the sample clips,
 so Part B is not scored there.
 
-**Fresh-clone check (2026-09-25):** `git clone` -> `pip install -r
-requirements.txt` into a new venv -> `python run_submission.py --videos samples`
--> `evaluate.py --validate-only`: VALID, and the events on all five videos are
-identical to `predictions_samples.json` (26/26); every clip within the budget
-(1.45-1.56x). Part A there came from the development cache on that machine, so
-Stage 1 was also re-run uncached from the clone on sample_004: identical events.
-Risk curves differ in 1-3% of frames -- the Part B guard is wall-clock (see
-Determinism).
+**Fresh-clone check (2026-09-25):** cloned the public main commit into an
+empty directory, installed `requirements.txt` in a new venv, and ran the
+unmodified harness on all five videos with an empty Stage 1 cache. Official
+`evaluate.py --validate-only` returned VALID (26 events, zero errors and
+warnings). All event intervals matched an independent cached regeneration and
+the earlier committed sample output exactly. Each clip met the 3x budget:
+synthetic 0.93x, sample_001 2.22x, sample_002 2.05x, sample_003 2.17x,
+sample_004 1.99x. The scorer returned **0.2846** on the team-authored labels.
+The independent run changed 300 risk samples on sample_002 because the Part B
+guard depends on wall time; all other risk curves matched. The committed
+`predictions_samples.json` and website risk charts use the fresh-clone output.
 
 `predictions_samples.json` (harness output), `labels/` (our labels and the
 review tool), `site_assets/` (annotated videos, event clips, risk curves,
@@ -207,7 +210,7 @@ tools/
   review_candidates.py   candidate events + scan windows -> review page (review.html)
   scan_windows.py        search aid for manual review (NOT a rule)
   build_site_assets.py   annotated videos, event clips, risk/EDA data -> site_assets/
-demo/                    Hugging Face Space (Gradio): live demo of the pipeline
+demo/                    Streamlit Community Cloud: live demo of the pipeline
 labels/                  our labels for the sample clips + how they were made
 site_assets/             website results and EDA (see its README)
 scripts/offline_check.py proves the pipeline completes with the network blocked
