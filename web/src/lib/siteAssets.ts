@@ -41,6 +41,7 @@ export interface TeamMember {
 }
 
 export interface TeamCredits {
+  name: string;
   members: TeamMember[];
   attribution: string;
   source: string;
@@ -90,7 +91,7 @@ export async function loadSiteAssets(signal?: AbortSignal): Promise<SiteAssets> 
     ]),
   ]);
 
-  if (team.members.length === 0 || eda.length !== CLIPS.length || rawFailures.length === 0 || format.decisions.length === 0) {
+  if (!team.name.trim() || team.members.length === 0 || eda.length !== CLIPS.length || rawFailures.length === 0 || format.decisions.length === 0) {
     throw new Error("site_assets contains incomplete website evidence.");
   }
 
