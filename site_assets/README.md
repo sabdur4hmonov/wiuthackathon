@@ -6,6 +6,9 @@ cache and `predictions_samples.json`. Everything here is OUR output on the
 sample clips; nothing is an official grade. Times are in seconds from the
 start of each clip; clip names match `predictions_samples.json`.
 
+`team.json` contains the member names and profile links published in the
+project README. It is the website's Team section data source.
+
 ## Per clip (`<clip>` = sample_001 ... sample_004)
 
 | file | what it is |

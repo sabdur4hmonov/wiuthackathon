@@ -1,0 +1,26 @@
+{
+  "members": [
+    {
+      "name": "Sardorbek Abdurahmonov",
+      "role": "Team leader",
+      "links": [
+        { "label": "GitHub", "url": "https://github.com/sabdur4hmonov" },
+        { "label": "LinkedIn", "url": "https://www.linkedin.com/in/sardorbek-abdurahmonov" }
+      ]
+    },
+    {
+      "name": "Humoyun Ehsanov",
+      "links": [
+        { "label": "LinkedIn", "url": "https://www.linkedin.com/in/humoyun-eksanov-b2ba85346" }
+      ]
+    },
+    {
+      "name": "Sodiqov Muhammadaziz",
+      "links": [
+        { "label": "LinkedIn", "url": "https://uz.linkedin.com/in/muhammadaziz-sodiqov-08a01535b" }
+      ]
+    }
+  ],
+  "attribution": "Built with AI assistance under Sardorbek Abdurahmonov's direction; he directed the pipeline and website, reviewed results, and labelled the sample clips.",
+  "source": "README.md"
+}
