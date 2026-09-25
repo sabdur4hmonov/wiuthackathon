@@ -17,7 +17,7 @@ its 3x-realtime budget for Part A + Part B together, offline.
 Abdurahmonov's direction: he directed it end to end (pipeline and website),
 reviewed the results and labelled the sample clips.
 
-Website: `<team website's final live URL>`
+Website: https://sabdur4hmonov.github.io/wiuthackathon/
 Live demo: https://wiuthackathon-gerwwm75st8xkhkapprvc79.streamlit.app -- upload a clip (up to 120 s / 200 MB) and get events, an annotated playback and the risk curve (Streamlit Community Cloud, CPU; see [demo/README.md](demo/README.md)).
 
 ---
@@ -138,23 +138,6 @@ and the rest of that clip's curve is 0. Given the same frames processed, the
 scores are deterministic.
 
 ## Results on the sample clips
-
-Against the team's labels for the four sample clips (`labels/ground_truth.json`,
-made by reviewing our candidates -- so these numbers flatter us somewhat):
-**Score A 0.285** -- jaywalking F1 0.55 (TP 14 / FP 9 / FN 9 at tIoU 0.5),
-stopped_vehicle 0.30 (2 / 1 / 6), congestion 0 (1 missed; the rule is gated
-off at keyframe rate). Per-event misses and false positives:
-`site_assets/eda/dev_error_analysis.json`. No accidents in the sample clips,
-so Part B is not scored there.
-
-**Fresh-clone check (2026-09-25):** `git clone` -> `pip install -r
-requirements.txt` into a new venv -> `python run_submission.py --videos samples`
--> `evaluate.py --validate-only`: VALID, and the events on all five videos are
-identical to `predictions_samples.json` (26/26); every clip within the budget
-(1.45-1.56x). Part A there came from the development cache on that machine, so
-Stage 1 was also re-run uncached from the clone on sample_004: identical events.
-Risk curves differ in 1-3% of frames -- the Part B guard is wall-clock (see
-Determinism).
 
 `predictions_samples.json` (harness output), `labels/` (our labels and the
 review tool), `site_assets/` (annotated videos, event clips, risk curves,
