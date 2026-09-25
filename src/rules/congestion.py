@@ -27,8 +27,16 @@ TWO THINGS MAKE THIS HARD.
 
 Over a sliding window_sec, a direction is congested when on average at least
 min_vehicles of its vehicles are counted AND at least slow_fraction of those
-samples crawl. That state must hold for min_duration_sec, bridged across
-short dips.
+samples crawl AND at least min_distinct_slow different tracks are crawling. A
+vehicle only counts as crawling once its track has read slow for
+slow_persist_sec in a row. That state must hold for min_duration_sec, bridged
+across short dips.
+
+3. SAMPLE RATE. At keyframe rate (0.5 s) a moving platoon can alias into a
+   track that seems to stand still. Measured against a 0.1 s run of sample_004:
+   8 % of the rows called slow were such phantoms, and slow_persist_sec removes
+   85 % of those. That is why the rule runs at keyframe rate and wrong_way does
+   not: wrong_way reads direction, which aliasing reverses outright.
 """
 from __future__ import annotations
 
@@ -76,12 +84,38 @@ def direction_groups(zones, tolerance_deg: float) -> list[tuple[str, list[int]]]
             enumerate(group_lanes_by_direction(zones, tolerance_deg))]
 
 
+def persistent_slow(data: np.ndarray, slow: np.ndarray, persist_sec: float,
+                    sample_sec: float) -> np.ndarray:
+    """(N,) slow AND the row's track has read slow on every sample for persist_sec.
+
+    One missed sample is tolerated (gap up to 2.5 samples); a moving sample or
+    a longer gap restarts the count. Untracked rows (id -1) never qualify.
+    """
+    out = np.zeros(slow.shape, dtype=bool)
+    if persist_sec <= 0:
+        return slow & (data[:, COL["track_id"]] >= 0)
+    ids = data[:, COL["track_id"]].astype(np.int64)
+    t = data[:, COL["t_sec"]].astype(float)
+    max_gap = 2.5 * max(sample_sec, 1e-6)
+    order = np.lexsort((t, ids))
+    run_start, prev_id, prev_t = None, None, None
+    for i in order:
+        if ids[i] < 0 or not slow[i]:
+            run_start = None
+        elif run_start is None or ids[i] != prev_id or t[i] - prev_t > max_gap:
+            run_start = t[i]
+        prev_id, prev_t = ids[i], t[i]
+        # A float tolerance: samples sit on frame_idx / fps, not exact tenths.
+        out[i] = run_start is not None and t[i] - run_start >= persist_sec - 1e-3
+    return out
+
+
 @rule("congestion")
 def detect(tracks, zones, th: CongestionThresholds | None = None
            ) -> list[FrameSegment]:
     th = th or TH.congestion
 
-    # Direction and speed need dense samples; see max_sample_sec.
+    # Speed needs samples no sparser than max_sample_sec (keyframes pass).
     if tracks.frame_stride / (tracks.fps or 25.0) > th.max_sample_sec:
         return []
     if zones is None or len(tracks) == 0 or not zones.lanes:
@@ -97,8 +131,11 @@ def detect(tracks, zones, th: CongestionThresholds | None = None
     tracked = data[:, COL["track_id"]] >= 0
     # Crawling judged over seconds of movement, so box jitter on a queued car
     # does not read as motion. Untracked rows carry no speed at all and are
-    # left out: counting them would add phantom stationary vehicles.
-    slow_row = sustained_speed(veh) <= th.crawl_speed_L_s * box_heights(data)
+    # left out: counting them would add phantom stationary vehicles. A row
+    # only counts once its track has stayed slow for slow_persist_sec, which
+    # removes most keyframe-rate aliasing (see the thresholds).
+    slow_row = persistent_slow(data, sustained_speed(veh) <= th.crawl_speed_L_s * box_heights(data),
+                               th.slow_persist_sec, veh.frame_stride / (veh.fps or 25.0))
 
     groups = direction_groups(zones, th.direction_group_tolerance_deg)
     group_of_lane = np.full(len(zones.lanes) + 1, -1, dtype=np.int64)  # [-1] -> no lane
@@ -133,6 +170,21 @@ def detect(tracks, zones, th: CongestionThresholds | None = None
     with np.errstate(invalid="ignore", divide="ignore"):
         frac = np.where(win_total > 0, win_slow / np.maximum(win_total, 1), 0.0)
     congested = (per_frame >= th.min_vehicles) & (frac >= th.slow_fraction)
+    # Corroboration: enough DIFFERENT slow vehicles in the window, not one
+    # track counted over and over.
+    counted_slow = countable & slow_row
+    if th.min_distinct_slow > 1:
+        ids = data[:, COL["track_id"]].astype(np.int64)
+        for gi in range(len(groups)):
+            sel = counted_slow & (row_group == gi)
+            if not congested[:, gi].any():
+                continue
+            order = np.argsort(pos[sel], kind="stable")
+            p_sel, id_sel = pos[sel][order], ids[sel][order]
+            for k in np.nonzero(congested[:, gi])[0]:
+                a, b = np.searchsorted(p_sel, [lo[k], hi[k]], side="left")
+                if np.unique(id_sel[a:b]).size < th.min_distinct_slow:
+                    congested[k, gi] = False
 
     out: list[FrameSegment] = []
     for gi, (name, members) in enumerate(groups):

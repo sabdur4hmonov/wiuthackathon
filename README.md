@@ -53,7 +53,7 @@ video ─┬─ Part B probe: time 3 short cv2 reads -> how much of the 3x budge
        │    -> camera-pose alignment of zones.json, from the same frames (src/align.py)
        │    = a tracks table (cached for development only)
        ├─ STAGE 2  src/rules/                  tracks + aligned zones -> raw segments
-       │    jaywalking, stopped_vehicle (+ wrong_way, congestion when samples <= 0.2 s apart)
+       │    jaywalking, stopped_vehicle, congestion (+ wrong_way when samples <= 0.2 s apart)
        └─ STAGE 3  src/postprocess.py          merge, de-blip, no same-class overlap -> events
 
 harness frames ── Part B  src/risk/estimator.py  (causal: only frames step() has seen)
@@ -142,8 +142,9 @@ scores are deterministic.
 Against the team's labels for the four sample clips (`labels/ground_truth.json`,
 made by reviewing our candidates -- so these numbers flatter us somewhat):
 **Score A 0.285** -- jaywalking F1 0.55 (TP 14 / FP 9 / FN 9 at tIoU 0.5),
-stopped_vehicle 0.30 (2 / 1 / 6), congestion 0 (1 missed; the rule is gated
-off at keyframe rate). Per-event misses and false positives:
+stopped_vehicle 0.30 (2 / 1 / 6), congestion 0 (1 missed: a 15 s northbound
+standstill on sample_004 that the congestion rule deliberately does not call --
+see "congestion at keyframe rate" below). Per-event misses and false positives:
 `site_assets/eda/dev_error_analysis.json`. No accidents in the sample clips,
 so Part B is not scored there.
 
@@ -884,9 +885,26 @@ about one car-gap per 0.5 s the tracker hops back to the car behind each
 sample, and the track drifts backwards. On sample_002 at 0:46, real cars moved
 left at 550-680 px/s while keyframe tracks drifted right at 150-200 px/s in
 lanes NB1-NB3 -- 11-13 wrong_way events over the four clips, all false.
-`wrong_way` and `congestion` therefore stay silent unless samples are at most
-0.2 s apart (`max_sample_sec`); neither fired in CP3. `jaywalking` and
-`stopped_vehicle` are position-based and unaffected.
+`wrong_way` therefore stays silent unless samples are at most 0.2 s apart
+(`max_sample_sec`); it never fired in CP3. `jaywalking` and `stopped_vehicle`
+are position-based and unaffected.
+
+**Congestion at keyframe rate (enabled 2026-09-25, measured first).**
+`congestion` reads speed MAGNITUDE, not direction, and a typical aliased
+platoon drifts at 150-200 px/s -- far above the crawl bar. Only a platoon whose
+car gap matches one sample's travel reads as stopped. Measured by re-running
+Stage 1 on sample_004 at 0.1 s (NONREF) and matching every vehicle the rule
+counts: 26 of the 314 rows the keyframe tracks called slow (8 %) were moving
+at 1-4 box heights/s. Two guards were added: a vehicle counts as crawling only
+after 1.5 s of slow samples in a row (`slow_persist_sec`; removes 22 of the 26,
+keeps 209 of 288 truly slow rows), and a window needs at least 4 DIFFERENT
+crawling tracks (`min_distinct_slow`). With the existing bar (4 vehicles, 85 %
+crawling, 30 s, all outside the signal queue zones) the rule is silent on all
+four clips, at keyframe and at 0.1 s sampling, and stays silent even loosened
+to 10 s or 70 %. The one congestion label (sample_004 88.7-104.2 s, a queue
+held while an articulated truck turns across the junction) came from the
+labelling scan's loosened version of this rule; the shipped rule does not call
+it, and was not tuned to.
 
 **A sample-rate bug in the rules, fixed.** Gap-bridging measured sample to
 sample, so two consecutive samples counted one step as "no evidence": 0.07 s
@@ -922,7 +940,7 @@ under the 2 s minimum; four keyframe samples count as 2.0 s.
    `Budget.headroom_x()` is what the measured Part B (x1.3 safety) leaves;
    with at least `dense_min_headroom_x` (1.0x) of it, Stage 1 decodes
    `NONREF` (I+P, one frame every 0.1 s on these clips), which is dense
-   enough for wrong_way and congestion. If the dense pass projects past
+   enough for wrong_way. If the dense pass projects past
    `part_a_hard` it drops back to keyframes at the next keyframe and finishes
    there, and the table reports the keyframe step so the direction rules stay
    off. No measurement, no density: it is never bought on the fixed fallback.

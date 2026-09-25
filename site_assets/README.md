@@ -29,7 +29,8 @@ annotated clip.
 * `far_kerb_pedestrians` -- people ~30 px tall at the far kerb: too small for
   the kerb-margin test either way.
 * `platoon_aliasing` -- at 2 samples/s a platoon of cars makes the tracker drift
-  backwards; why wrong_way/congestion are off at keyframe rate.
+  backwards; why wrong_way is off at keyframe rate (congestion runs there, with
+  two guards measured against a 0.1 s run -- see the main README).
 
 ## EDA (`eda/`)
 

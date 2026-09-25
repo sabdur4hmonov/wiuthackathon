@@ -142,8 +142,8 @@ class BudgetConfig:
     # The keyframe pass always completes. When the measured Part B leaves at
     # least dense_min_headroom_x of the video's duration spare at the start of
     # Stage 1, it decodes dense_skip_frame instead (NONREF = I+P, one frame
-    # every 0.1 s on the real clips) -- dense enough for wrong_way and
-    # congestion (max_sample_sec 0.2). If the dense pass then projects past
+    # every 0.1 s on the real clips) -- dense enough for wrong_way
+    # (max_sample_sec 0.2). If the dense pass then projects past
     # part_a_hard it drops back to keyframes at the next keyframe and finishes
     # there. MEASURED dense cost on the 4K clips, 8-core box: decode 0.53x
     # realtime (NONREF + downscale), plus five times the keyframe inference.
@@ -174,9 +174,9 @@ class PerceptionConfig:
     # What changes when you flip them:
     #   * The perception cache key changes, so every clip re-runs Stage 1.
     #   * Tracker settings below are in seconds / box heights and follow the
-    #     sample step. Rules are written in seconds; wrong_way and congestion
-    #     stay silent when samples are more than 0.2 s apart (aliasing, see
-    #     thresholds.WrongWayThresholds.max_sample_sec).
+    #     sample step. Rules are written in seconds; wrong_way stays silent
+    #     when samples are more than 0.2 s apart, congestion when more than
+    #     0.6 s (aliasing, see thresholds.*.max_sample_sec).
     #   * `weights` must name a file in weights/ that weights/download.sh
     #     also fetches -- the run is offline, and only yolo11s.pt is listed
     #     there today. tests/test_config.py fails if the two disagree.

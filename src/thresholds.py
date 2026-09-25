@@ -229,9 +229,25 @@ class CongestionThresholds:
     # lanes whose arrows agree within this angle are then one direction.
     direction_group_tolerance_deg: float = 45.0
 
-    # Same aliasing limit as WrongWayThresholds.max_sample_sec: an aliased
-    # platoon of cars reads as crawling traffic.
-    max_sample_sec: float = 0.2
+    # MEASURED (2026-09-25, sample_004 keyframe tracks vs a 0.1 s NONREF run of
+    # the same clip). Unlike wrong_way, this rule reads speed MAGNITUDE, and a
+    # typical aliased platoon drifts at 150-200 px/s -- far above the crawl bar.
+    # Only a platoon whose car gap matches one sample's travel reads as
+    # stopped: 26 of the 314 counted rows the keyframe tracks called slow were
+    # moving at 1-4 L/s at 0.1 s (8 %). slow_persist_sec removes 22 of those 26
+    # and keeps 209 of the 288 truly slow rows. So the rule runs at keyframe
+    # rate (0.5 s); only sparser sampling keeps it silent.
+    max_sample_sec: float = 0.6
+
+    # MEASURED, as above: a vehicle counts as crawling only once its track has
+    # read slow on every sample for this long (at 0.5 s: 4 samples in a row).
+    # An aliased hop rarely repeats on consecutive samples; a real stop does.
+    slow_persist_sec: float = 1.5
+
+    # CALIBRATION: GUESS, biased quiet. Corroboration: the window must hold at
+    # least this many DIFFERENT persistently-slow tracks, so one shaky track
+    # (or one ID that keeps re-appearing) cannot make a direction congested.
+    min_distinct_slow: int = 4
 
 
 @dataclass(frozen=True)

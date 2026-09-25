@@ -12,6 +12,8 @@ denominator, so a rule that over-fires is worse than one that under-fires.
 """
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import pytest
 
@@ -24,6 +26,7 @@ from src.rules import congestion as congestion_mod
 from src.rules import jaywalking as jaywalking_mod
 from src.rules import stopped_vehicle as stopped_mod
 from src.rules import wrong_way as wrong_way_mod
+from src.thresholds import TH
 
 
 @pytest.fixture(scope="module")
@@ -738,10 +741,10 @@ def test_wrong_way_only_judges_painted_lanes(zones):
 # ===========================================================================
 # sample rate: keyframe-only Stage 1 (0.5 s between samples)
 # ===========================================================================
-def test_direction_rules_are_silent_at_keyframe_rate(zones):
+def test_wrong_way_is_silent_at_keyframe_rate(zones):
     """At 0.5 s per sample a moving platoon aliases (the track hops back one
-    car per sample), so direction and speed are not trustworthy: the SAME
-    scenes that fire at stride 2 must stay silent at the keyframe step."""
+    car per sample), so direction is not trustworthy: the SAME scene that
+    fires at stride 2 must stay silent at the keyframe step."""
     for step, expect in ((2, True), (12, False)):          # 25 fps: 0.08 s, 0.48 s
         b = TrackBuilder(duration=40.0, frame_stride=step)
         (b.vehicle()
@@ -749,10 +752,49 @@ def test_direction_rules_are_silent_at_keyframe_rate(zones):
           .drive_to(point_in_lane("ns_nb_outer", 0.02), speed=90.0))
         assert bool(wrong_way_mod.detect(b.build(), zones)) is expect
 
+
+def test_congestion_runs_at_keyframe_rate_but_not_sparser(zones):
+    """congestion reads speed magnitude, which keyframe-rate aliasing rarely
+    zeroes (measured; see CongestionThresholds.max_sample_sec): a jam fires at
+    0.08 s and 0.48 s per sample, and only sparser sampling keeps it silent."""
+    for step, expect in ((2, True), (12, True), (25, False)):   # 0.08, 0.48, 1.0 s
         b = TrackBuilder(duration=60.0, frame_stride=step)
         for lane_id in ("ns_nb_inner", "ns_nb_outer"):
             _fill_lane(b, lane_id, 4, 0.72, 0.98, speed=10.0, duration=45.0)
         assert bool(congestion_mod.detect(b.build(), zones)) is expect
+
+
+def test_congestion_needs_distinct_slow_vehicles(zones):
+    """Corroboration: the same 8-vehicle jam is silent when more different
+    crawling tracks are demanded than it has."""
+    b = TrackBuilder(duration=60.0, frame_stride=12)
+    for lane_id in ("ns_nb_inner", "ns_nb_outer"):
+        _fill_lane(b, lane_id, 4, 0.72, 0.98, speed=10.0, duration=45.0)
+    tracks = b.build()
+    th = TH.congestion
+    assert congestion_mod.detect(tracks, zones, dataclasses.replace(th, min_distinct_slow=8))
+    assert congestion_mod.detect(tracks, zones, dataclasses.replace(th, min_distinct_slow=9)) == []
+
+
+def test_persistent_slow_needs_consecutive_slow_samples():
+    """A track counts as crawling only after slow_persist_sec of slow samples
+    in a row; an aliased hop (slow on alternate samples) never gets there, and
+    one missed sample does not restart the count."""
+    from src.tracks import COL, COLUMNS
+    rows = []
+    for tid, times in ((1, [0.0, 0.5, 1.0, 1.5, 2.0]),      # steady stop
+                       (2, [0.0, 0.5, 1.0, 1.5, 2.0]),      # alternating
+                       (3, [0.0, 0.5, 1.5, 2.0])):          # stop, one sample missing
+        for t in times:
+            r = np.zeros(len(COLUMNS))
+            r[COL["track_id"]], r[COL["t_sec"]] = tid, t
+            rows.append(r)
+    data = np.array(rows)
+    slow = np.array([True] * 5 + [True, False, True, False, True] + [True] * 4)
+    got = congestion_mod.persistent_slow(data, slow, 1.5, 0.5)
+    assert got[:5].tolist() == [False, False, False, True, True]
+    assert not got[5:10].any()
+    assert got[10:].tolist() == [False, False, True, True]
 
 
 def test_a_single_missed_sample_does_not_split_a_run():
