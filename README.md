@@ -6,7 +6,7 @@ stopped vehicle, wrong way, congestion) as `[start, end, label]` segments;
 organizers' harness (`run_submission.py`, `evaluate.py`, both unchanged) and
 its 3x-realtime budget for Part A + Part B together, offline.
 
-**Team:** `<TEAM NAME>`
+**Team:** Armagedon
 
 - **Sardorbek Abdurahmonov** (team leader) — [GitHub](https://github.com/sabdur4hmonov) ·
   [LinkedIn](https://www.linkedin.com/in/sardorbek-abdurahmonov)
