@@ -1,14 +1,19 @@
 """CP4 budget policy on the keyframe path (src/perception.py + src/budget.py).
 
 * The keyframe baseline always completes, whatever the budget says.
-* Density beyond it is bought only with MEASURED Part B headroom, and dropped
-  back to keyframes when the dense pass projects past part_a_hard.
+* Density is OFF by default (BudgetConfig.dense_enabled), so predictions do not
+  depend on a wall-clock probe. When enabled, it is bought only with MEASURED
+  Part B headroom, and dropped back to keyframes when the dense pass projects
+  past part_a_hard.
 """
+import dataclasses
+
 import numpy as np
 import pytest
 
 from src import avdecode, perception
 from src.budget import Budget
+from src.config import CFG
 
 pytestmark = pytest.mark.skipif(not avdecode.is_available(), reason="PyAV not installed")
 pytest.importorskip("ultralytics")
@@ -66,6 +71,11 @@ def _budget(clip):
     return Budget.for_video(clip)
 
 
+def _dense_budget(clip):
+    """Density switched on explicitly: the default never buys it."""
+    return Budget.for_video(clip, cfg=dataclasses.replace(CFG.budget, dense_enabled=True))
+
+
 def test_the_keyframe_baseline_ignores_a_budget_stop(clip, model):
     b = _budget(clip)
     b.force_stop("no time at all")                 # e.g. Part B measured over budget
@@ -82,8 +92,20 @@ def test_no_density_without_a_real_part_b_measurement(clip, model):
     assert model.frames == N // GOP
 
 
-def test_density_when_the_measured_part_b_leaves_room(clip, model, monkeypatch):
+def test_density_is_off_by_default_even_with_room(clip, model):
+    """Reproducibility: whether a wall-clock probe crossed a bar must not
+    change the predictions, so the default config stays on keyframes."""
+    assert CFG.budget.dense_enabled is False
     b = _budget(clip)
+    b.set_measured_part_b(0.0)                     # plenty of room
+    assert b.headroom_x() >= b.cfg.dense_min_headroom_x
+    t = perception.run_perception(clip, b, verbose=False)
+    assert t.frame_stride == GOP
+    assert model.frames == N // GOP
+
+
+def test_density_when_the_measured_part_b_leaves_room(clip, model, monkeypatch):
+    b = _dense_budget(clip)
     b.set_measured_part_b(0.0)                     # a light clip: Part B is cheap
     assert b.headroom_x() >= b.cfg.dense_min_headroom_x
     # The choice is under test, not the drop-back (its own test below): on a
@@ -96,7 +118,7 @@ def test_density_when_the_measured_part_b_leaves_room(clip, model, monkeypatch):
 
 
 def test_no_density_when_part_b_leaves_no_room(clip, model):
-    b = _budget(clip)
+    b = _dense_budget(clip)
     b.set_measured_part_b(2.5 * b.duration)        # the 4K clips on the 8-core box
     assert b.headroom_x() < b.cfg.dense_min_headroom_x
     t = perception.run_perception(clip, b, verbose=False)
@@ -104,7 +126,7 @@ def test_no_density_when_part_b_leaves_no_room(clip, model):
 
 
 def test_dense_pass_drops_back_to_keyframes_and_still_finishes(clip, model, monkeypatch):
-    b = _budget(clip)
+    b = _dense_budget(clip)
     b.set_measured_part_b(0.0)
     monkeypatch.setattr(b, "project_overrun", lambda *a, **k: True)
     t = perception.run_perception(clip, b, verbose=False)

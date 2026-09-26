@@ -18,6 +18,7 @@ Abdurahmonov's direction: he directed it end to end (pipeline and website),
 reviewed the results and labelled the sample clips.
 
 Website: https://sabdur4hmonov.github.io/wiuthackathon/
+Submission: tag [`v1.1-final`](https://github.com/sabdur4hmonov/wiuthackathon/tree/v1.1-final)
 Live demo: https://wiuthackathon-gerwwm75st8xkhkapprvc79.streamlit.app -- upload a clip (up to 120 s / 200 MB) and get events, an annotated playback and the risk curve (Streamlit Community Cloud, CPU; see [demo/README.md](demo/README.md)).
 
 ---
@@ -63,8 +64,9 @@ harness frames ── Part B  src/risk/estimator.py  (causal: only frames step()
 ```
 
 Budget policy: the keyframe pass always completes (~0.1-0.3x realtime decode
-plus inference); denser decoding is bought only if the measured Part B leaves
-room. Details and measurements: [CP4](#cp4-keyframe-only-part-a-2026-09-24).
+plus inference). Denser decoding exists but is disabled
+(`BudgetConfig.dense_enabled = False`): keyframes only, on every machine.
+Details and measurements: [CP4](#cp4-keyframe-only-part-a-2026-09-24).
 
 ## Part B: the risk score, and its guard
 
@@ -130,6 +132,10 @@ Because YOLO11 is AGPL-3.0, the repository and live demo are published under AGP
 post-processing are deterministic given the detections. Checked: re-running
 Part A on all four sample clips reproduces the events in
 `predictions_samples.json` exactly.
+
+Stage 1 samples keyframes only; dense mode is disabled
+(`BudgetConfig.dense_enabled = False`), because it was switched on by a
+wall-clock probe and once gave sample_003 an extra event on a re-run.
 
 One deliberate exception: **how much of a clip Part B scores depends on the
 machine's speed.** Its self-timing guard stops the risk work on wall-clock
@@ -937,7 +943,8 @@ under the 2 s minimum; four keyframe samples count as 2.0 s.
    not the video is wiped, so a Part A starved to zero and a wiped video both
    score nothing: finishing the baseline is never worse. It costs ~0.1-0.3x
    realtime on the 4K clips, plus inference.
-2. **The Part B probe buys only optional density.** It is now the median of
+2. **The Part B probe buys only optional density** (density disabled since
+   `v1.1-final`, see Determinism). It is now the median of
    three short probes at 10%, 50% and 85% of the file (each seeks, reads one
    frame untimed, then times plain `cap.read()`), not one probe from frame 0.
    `Budget.headroom_x()` is what the measured Part B (x1.3 safety) leaves;

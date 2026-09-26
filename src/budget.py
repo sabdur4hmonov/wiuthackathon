@@ -18,9 +18,9 @@ The policy (CP4):
    Part A starved to zero and a wiped video both score nothing: running the
    baseline is never worse. It costs ~0.1-0.3x realtime on the 4K clips.
 2. Part B's measured decode (median of three probes, measure_part_b_floor)
-   decides only whether there is room for OPTIONAL density beyond the
-   baseline (headroom_x). Lighter clips measure lighter and buy it
-   automatically; the 4K test clips on an 8-core CPU box do not.
+   would decide whether there is room for OPTIONAL density beyond the
+   baseline (headroom_x). Density is disabled (BudgetConfig.dense_enabled):
+   every run samples keyframes only, so predictions do not depend on timing.
 3. The cv2 fallback decoder (no PyAV) still stops at part_a_hard: it decodes
    every frame and cannot be trusted to finish.
 """

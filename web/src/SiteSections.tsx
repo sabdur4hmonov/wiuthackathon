@@ -2,7 +2,7 @@ import { EdaChart } from "./components/EdaChart.tsx";
 import { siteAssetUrl, type SiteAssets } from "./lib/siteAssets.ts";
 
 const repo = "https://github.com/sabdur4hmonov/wiuthackathon";
-const tag = `${repo}/tree/v1.0-final2`;
+const tag = `${repo}/tree/v1.1-final`;
 const integer = new Intl.NumberFormat("en-US");
 const meanF1: Record<string, number> = { jaywalking: 0.551, stopped_vehicle: 0.303, congestion: 0 };
 
@@ -17,7 +17,7 @@ export function ApproachSection() {
     </div>
     <div className="approach-details">
       <article><h3>What is learned?</h3><p>YOLO11s is the only learned model. Track association, scene geometry, jaywalking, stopped-vehicle and congestion decisions, post-processing and the time-to-collision score are engineered rules. Wrong-way detection is gated off at the 0.5 s sample interval because car platoons alias.</p></article>
-      <article><h3>Models, data and licences</h3><p><a href="https://docs.ultralytics.com/models/yolo11/" target="_blank" rel="noreferrer">Ultralytics YOLO11s</a> weights and implementation: AGPL-3.0. COCO is the pretraining dataset; its annotations are CC BY 4.0 and source-image licences vary. We do not redistribute COCO or retrain. PyAV/FFmpeg, OpenCV, NumPy, SciPy and lap are credited in the <a href={`${repo}/blob/v1.0-final2/README.md#models-data-and-licences`} target="_blank" rel="noreferrer">repository licence table</a>. The organizers' sample MP4s are not in the repository; this site shows our web-sized annotated outputs.</p></article>
+      <article><h3>Models, data and licences</h3><p><a href="https://docs.ultralytics.com/models/yolo11/" target="_blank" rel="noreferrer">Ultralytics YOLO11s</a> weights and implementation: AGPL-3.0. COCO is the pretraining dataset; its annotations are CC BY 4.0 and source-image licences vary. We do not redistribute COCO or retrain. PyAV/FFmpeg, OpenCV, NumPy, SciPy and lap are credited in the <a href={`${repo}/blob/v1.1-final/README.md#models-data-and-licences`} target="_blank" rel="noreferrer">repository licence table</a>. The organizers' sample MP4s are not in the repository; this site shows our web-sized annotated outputs.</p></article>
     </div>
   </section>;
 }
@@ -76,7 +76,7 @@ export function ReportSection({ assets, error }: { assets: SiteAssets | null; er
       </div>
       <details className="report-decisions"><summary>Engineering decisions from the camera and codec measurements</summary><div className="decision-grid">{assets.format.decisions.map((item, index) => <article key={item.finding}><span>{String(index + 1).padStart(2, "0")}</span><h3>{item.finding}</h3><p>{item.decision}</p></article>)}</div></details>
       <p className="evidence-note">{assets.team.attribution}</p>
-      <div className="resource-row" id="links"><a href={repo} target="_blank" rel="noreferrer">Repository ↗</a><a href={tag} target="_blank" rel="noreferrer">Verified tag ↗</a><a href={`${repo}/blob/v1.0-final2/weights/yolo11s.pt`} target="_blank" rel="noreferrer">Weights ↗</a><a href={`${repo}/blob/v1.0-final2/predictions_samples.json`} target="_blank" rel="noreferrer">Sample predictions ↗</a></div>
+      <div className="resource-row" id="links"><a href={repo} target="_blank" rel="noreferrer">Repository ↗</a><a href={tag} target="_blank" rel="noreferrer">Verified tag ↗</a><a href={`${repo}/blob/v1.1-final/weights/yolo11s.pt`} target="_blank" rel="noreferrer">Weights ↗</a><a href={`${repo}/blob/v1.1-final/predictions_samples.json`} target="_blank" rel="noreferrer">Sample predictions ↗</a></div>
     </>}
   </section>;
 }

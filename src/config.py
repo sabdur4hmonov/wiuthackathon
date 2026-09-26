@@ -158,6 +158,15 @@ class BudgetConfig:
     # Density is optional; the bar is biased toward not buying it.
     dense_min_headroom_x: float = 1.8
 
+    # OFF (2026-09-26): keyframes only, always. Whether density was bought
+    # depended on a wall-clock probe, so the same machine could give different
+    # predictions run to run -- sample_003 once crossed the 1.8x bar by 0.03x
+    # and gained a stopped_vehicle event. A fast grading box would buy it on
+    # every clip: tracks the rules were never validated on, and wrong_way
+    # (max_sample_sec 0.2) switched back on. Every verified prediction is
+    # keyframes-only. The density code stays; set True to experiment.
+    dense_enabled: bool = False
+
 
 # --------------------------------------------------------------------------
 # perception

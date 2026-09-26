@@ -321,7 +321,8 @@ def run_perception(video_path: str | Path,
             #
             # BUDGET POLICY (src/budget.py): the keyframe baseline is never
             # stopped -- a starved Part A scores the same as a wiped video, so
-            # finishing it is never worse. Density beyond it is optional: taken
+            # finishing it is never worse. Density beyond it is disabled by
+            # default (BudgetConfig.dense_enabled); when enabled it is taken
             # only if the measured Part B leaves room, and dropped back to
             # keyframes as soon as it projects past part_a_hard.
             #
@@ -338,7 +339,7 @@ def run_perception(video_path: str | Path,
             # keyframes. A full decode is NOT cheap, so this mode keeps the
             # budget stop the keyframe baseline does without.
             long_gop = gap is None or gap / fps_ > LONG_GOP_SEC
-            dense = (not long_gop and headroom is not None
+            dense = (budget.cfg.dense_enabled and not long_gop and headroom is not None
                      and headroom >= budget.cfg.dense_min_headroom_x
                      and cfg.skip_frame != budget.cfg.dense_skip_frame)
             if long_gop:
